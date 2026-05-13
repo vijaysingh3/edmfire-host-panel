@@ -64,9 +64,9 @@ function getDeviceInfo(): { type: string; os: string; browser: string; memory: s
   // RAM (Chrome only)
   const memory = (navigator as any).deviceMemory ? `${(navigator as any).deviceMemory}GB` : '';
   const cores = navigator.hardwareConcurrency || 0;
-  const screen = `${screen.width}x${screen.height}`;
+  const screenRes = `${window.screen.width}x${window.screen.height}`;
 
-  return { type, os, browser, memory, cores, screen };
+  return { type, os, browser, memory, cores, screen: screenRes };
 }
 
 // Helper: reverse geocode lat/lng using free Nominatim API
