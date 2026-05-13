@@ -22,12 +22,66 @@ import {
   Send,
   Loader2,
   CheckCircle2,
+  MapPin,
+  Smartphone,
 } from 'lucide-react';
 import Image from 'next/image';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
 const TOTAL_STEPS = 7;
+
+// Helper: detect device info from browser
+function getDeviceInfo(): { type: string; os: string; browser: string; memory: string; cores: number; screen: string } {
+  const ua = navigator.userAgent;
+  let type = 'Desktop PC';
+  let os = 'Unknown';
+  let browser = 'Unknown';
+
+  // Device type
+  if (/Mobile|Android|iPhone/i.test(ua)) type = 'Android Phone';
+  else if (/iPad|Tablet/i.test(ua)) type = 'Tablet';
+  else if (/Macintosh/i.test(ua) && 'ontouchend' in document) type = 'Laptop';
+  else if (/Macintosh|Windows|Linux/i.test(ua)) type = 'Laptop';
+
+  if (/iPhone/i.test(ua)) type = 'iPhone';
+  if (/iPad/i.test(ua)) type = 'Tablet';
+
+  // OS
+  if (/Windows/i.test(ua)) os = 'Windows';
+  else if (/Mac OS X/i.test(ua)) os = 'macOS';
+  else if (/Android\s([\d.]+)/i.test(ua)) os = 'Android ' + (ua.match(/Android\s([\d.]+)/i)?.[1] || '');
+  else if (/iPhone OS ([\d_]+)/i.test(ua)) os = 'iOS ' + (ua.match(/iPhone OS ([\d_]+)/i)?.[1]?.replace(/_/g, '.') || '');
+  else if (/Linux/i.test(ua)) os = 'Linux';
+
+  // Browser
+  if (/Edg/i.test(ua)) browser = 'Microsoft Edge';
+  else if (/OPR|Opera/i.test(ua)) browser = 'Opera';
+  else if (/Chrome/i.test(ua) && !/Edg|OPR/i.test(ua)) browser = 'Google Chrome';
+  else if (/Safari/i.test(ua) && !/Chrome/i.test(ua)) browser = 'Safari';
+  else if (/Firefox/i.test(ua)) browser = 'Firefox';
+
+  // RAM (Chrome only)
+  const memory = (navigator as any).deviceMemory ? `${(navigator as any).deviceMemory}GB` : '';
+  const cores = navigator.hardwareConcurrency || 0;
+  const screen = `${screen.width}x${screen.height}`;
+
+  return { type, os, browser, memory, cores, screen };
+}
+
+// Helper: reverse geocode lat/lng using free Nominatim API
+async function reverseGeocode(lat: number, lon: number): Promise<{ state: string; district: string; city: string }> {
+  const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&addressdetails=1&accept-language=en`, {
+    headers: { 'User-Agent': 'EDMFire-HostPanel/1.0' }
+  });
+  const data = await res.json();
+  const addr = data.address || {};
+  return {
+    state: addr.state || '',
+    district: addr.state_district || addr.district || addr.county || '',
+    city: addr.city || addr.town || addr.village || addr.hamlet || addr.suburb || '',
+  };
+}
 
 const stepLabels = [
   { icon: '👤', label: 'Personal Info' },
@@ -95,6 +149,8 @@ export default function ApplyPage() {
   const [formData, setFormData] = useState<FormData>(initialFormData);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [isDetectingLocation, setIsDetectingLocation] = useState(false);
+  const [isDetectingDevice, setIsDetectingDevice] = useState(false);
 
   const updateField = (field: keyof FormData, value: string | string[]) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
@@ -247,6 +303,102 @@ export default function ApplyPage() {
 
   const inputClass = "bg-[oklch(0.22,0.04,290)] border-[oklch(0.30,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)]";
 
+  // Auto-detect location
+  const detectLocation = async () => {
+    if (!navigator.geolocation) {
+      toast.error('Geolocation not supported by your browser');
+      return;
+    }
+    setIsDetectingLocation(true);
+    try {
+      const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 10000 });
+      });
+      const { latitude, longitude } = pos.coords;
+      console.log('📍 [Location] GPS:', latitude, longitude);
+      const location = await reverseGeocode(latitude, longitude);
+      console.log('📍 [Location] Reverse geocode:', location);
+      if (location.state || location.district || location.city) {
+        setFormData(prev => ({
+          ...prev,
+          state: location.state || prev.state,
+          district: location.district || prev.district,
+          city: location.city || prev.city,
+        }));
+        toast.success('Location detected!', { description: `${location.city}, ${location.district}, ${location.state}` });
+      } else {
+        toast.error('Could not determine your location. Please fill manually.');
+      }
+    } catch (err: any) {
+      console.error('📍 [Location] Error:', err.message);
+      if (err.code === 1) {
+        toast.error('Location permission denied. Please fill manually.');
+      } else if (err.code === 2) {
+        toast.error('Location unavailable. Please fill manually.');
+      } else if (err.code === 3) {
+        toast.error('Location request timed out. Please fill manually.');
+      } else {
+        toast.error('Failed to detect location. Please fill manually.');
+      }
+    } finally {
+      setIsDetectingLocation(false);
+    }
+  };
+
+  // Auto-detect device info
+  const detectDevice = () => {
+    setIsDetectingDevice(true);
+    try {
+      const info = getDeviceInfo();
+      console.log('📱 [Device] Detected:', info);
+
+      // Set device type checkbox
+      const deviceMap: Record<string, string> = {
+        'Android Phone': 'Android Phone',
+        'iPhone': 'iPhone',
+        'Laptop': 'Laptop',
+        'Desktop PC': 'Desktop PC',
+        'Tablet': 'Tablet',
+      };
+      const detectedDevice = deviceMap[info.type] || '';
+      const newDevices = detectedDevice ? (formData.devices.includes(detectedDevice) ? formData.devices : [...formData.devices, detectedDevice]) : formData.devices;
+
+      // Build primary device string
+      let primaryName = info.os;
+      if (info.type === 'Android Phone') primaryName = 'Android (' + info.os + ')';
+      else if (info.type === 'iPhone') primaryName = 'iPhone (' + info.os + ')';
+      else if (info.type === 'Laptop') primaryName = info.os + ' Laptop';
+      else if (info.type === 'Desktop PC') primaryName = info.os + ' Desktop';
+      else if (info.type === 'Tablet') primaryName = info.os + ' Tablet';
+
+      // Map deviceMemory to RAM select value
+      let ramValue = '';
+      if (info.memory) {
+        const gb = parseInt(info.memory);
+        if (gb <= 2) ramValue = '2';
+        else if (gb === 3) ramValue = '3';
+        else if (gb === 4) ramValue = '4';
+        else if (gb <= 6) ramValue = '6';
+        else if (gb <= 8) ramValue = '8';
+        else ramValue = '12+';
+      }
+
+      const updates: Partial<FormData> = { devices: newDevices };
+      if (primaryName && !formData.primaryDevice) updates.primaryDevice = primaryName;
+      if (ramValue && !formData.ramSize) updates.ramSize = ramValue;
+
+      setFormData(prev => ({ ...prev, ...updates }));
+
+      const details = [info.type, info.os, info.browser, info.memory ? `RAM: ${info.memory}` : '', `${info.cores} cores`, info.screen].filter(Boolean).join(' | ');
+      toast.success('Device detected!', { description: details });
+    } catch (err: any) {
+      console.error('📱 [Device] Error:', err.message);
+      toast.error('Could not detect device info.');
+    } finally {
+      setIsDetectingDevice(false);
+    }
+  };
+
   // Success screen
   if (isSubmitted) {
     return (
@@ -398,6 +550,20 @@ export default function ApplyPage() {
             {/* STEP 2 — Location */}
             {step === 2 && (
               <div className="space-y-4">
+                {/* Auto-detect button */}
+                <button
+                  type="button"
+                  onClick={detectLocation}
+                  disabled={isDetectingLocation}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-blue-500/10 border border-blue-500/25 text-blue-300 text-xs font-medium hover:bg-blue-500/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isDetectingLocation ? (
+                    <><Loader2 className="w-4 h-4 animate-spin" /> Detecting your location...</>
+                  ) : (
+                    <><MapPin className="w-4 h-4" /> Auto Detect My Location</>
+                  )}
+                </button>
+                <p className="text-[10px] text-[oklch(0.45,0.04,290)] text-center">Tap the button above to auto-fill your location, or fill manually below</p>
                 <div className="space-y-2">
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     State <span className="text-red-400">*</span>
@@ -498,6 +664,20 @@ export default function ApplyPage() {
             {/* STEP 4 — Device Info */}
             {step === 4 && (
               <div className="space-y-4">
+                {/* Auto-detect button */}
+                <button
+                  type="button"
+                  onClick={detectDevice}
+                  disabled={isDetectingDevice}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-emerald-300 text-xs font-medium hover:bg-emerald-500/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isDetectingDevice ? (
+                    <><Loader2 className="w-4 h-4 animate-spin" /> Detecting your device...</>
+                  ) : (
+                    <><Smartphone className="w-4 h-4" /> Auto Detect My Device</>
+                  )}
+                </button>
+                <p className="text-[10px] text-[oklch(0.45,0.04,290)] text-center">Tap to auto-detect your device info, or fill manually below</p>
                 <div className="space-y-2">
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     Which Device Do You Use? <span className="text-red-400">*</span>
