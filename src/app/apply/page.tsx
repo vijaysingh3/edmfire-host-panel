@@ -179,8 +179,20 @@ export default function ApplyPage() {
 
     setIsSubmitting(true);
 
+    console.log('🔥 [Step 1] Submit started — form data:', {
+      fullName: formData.fullName,
+      gmail: formData.gmail,
+      mobile: formData.mobile,
+      state: formData.state,
+      gameModes: formData.gameModes,
+      currentRank: formData.currentRank,
+      devices: formData.devices,
+    });
+
     try {
-      const docRef = await addDoc(collection(db, 'applications'), {
+      console.log('🔥 [Step 2] Creating Firestore document in "applications" collection...');
+
+      const applicationData = {
         fullName: formData.fullName.trim(),
         gender: formData.gender,
         age: Number(formData.age),
@@ -205,16 +217,24 @@ export default function ApplyPage() {
         whyJoin: formData.whyJoin.trim(),
         status: 'pending',
         createdAt: serverTimestamp(),
-      });
+      };
 
-      console.log('Application submitted with ID:', docRef.id);
+      console.log('🔥 [Step 3] Data prepared, sending to Firestore...');
+
+      const docRef = await addDoc(collection(db, 'applications'), applicationData);
+
+      console.log('🔥 [Step 4] SUCCESS! Document saved with ID:', docRef.id);
+      console.log('🔥 [Step 4] Firestore path: applications/', docRef.id);
 
       setIsSubmitted(true);
       toast.success('Application Submitted Successfully!', {
         description: 'EDMFire team will review your application soon.',
       });
     } catch (error: any) {
-      console.error('Error submitting application:', error);
+      console.error('🔥 [ERROR] Firestore write failed!');
+      console.error('🔥 [ERROR] Code:', error?.code);
+      console.error('🔥 [ERROR] Message:', error?.message);
+      console.error('🔥 [ERROR] Full error:', error);
       toast.error('Submission Failed', {
         description: error?.message || 'Something went wrong. Please try again.',
       });
