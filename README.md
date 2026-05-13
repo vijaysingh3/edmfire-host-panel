@@ -1,6 +1,6 @@
 # EDMFire Host Panel
 
-> Firebase connected — Apply form data ab Firestore mein store hota hai
+Developed with ❤️ by **Vijay Singh**
 
 A production-ready **Free Fire Tournament Host Management Panel** built with Next.js 16, TypeScript, and Tailwind CSS. Converted from Android Kotlin XML layouts to a modern responsive web application.
 
