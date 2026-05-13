@@ -731,7 +731,7 @@ export default function ApplyPage() {
                     }
                   />
                   <div className="flex items-center justify-between">
-                    {formData.age !== '' && (
+                    {formData.age !== '' ? (
                       <p className={`text-[10px] flex items-center gap-1 ${
                         isAgeValid(formData.age) ? 'text-green-400' : 'text-red-400'
                       }`}>
