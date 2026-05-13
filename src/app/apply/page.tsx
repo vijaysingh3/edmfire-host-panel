@@ -142,7 +142,7 @@ const initialFormData: FormData = {
   ramSize: '',
   internetQuality: '',
   canScreenRecord: '',
-  whyJoin: '';
+  whyJoin: '',
 };
 
 export default function ApplyPage() {
