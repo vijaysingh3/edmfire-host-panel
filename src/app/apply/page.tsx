@@ -31,21 +31,21 @@ import { db } from '@/lib/firebase';
 
 const TOTAL_STEPS = 7;
 
-// Helper: detect device info from browser
-function getDeviceInfo(): { type: string; os: string; browser: string; memory: string; cores: number; screen: string } {
+// Helper: detect device info from browser (safe for SSR)
+function getDeviceInfo(): { type: string; os: string; browser: string; memory: string; cores: number; screen: string } | null {
+  if (typeof navigator === 'undefined') return null;
   const ua = navigator.userAgent;
   let type = 'Desktop PC';
   let os = 'Unknown';
   let browser = 'Unknown';
 
   // Device type
-  if (/Mobile|Android|iPhone/i.test(ua)) type = 'Android Phone';
+  if (/Mobile|Android/i.test(ua)) type = 'Android Phone';
+  if (/iPhone/i.test(ua)) type = 'iPhone';
   else if (/iPad|Tablet/i.test(ua)) type = 'Tablet';
+  else if (/Mobile|Android/i.test(ua)) type = 'Android Phone';
   else if (/Macintosh/i.test(ua) && 'ontouchend' in document) type = 'Laptop';
   else if (/Macintosh|Windows|Linux/i.test(ua)) type = 'Laptop';
-
-  if (/iPhone/i.test(ua)) type = 'iPhone';
-  if (/iPad/i.test(ua)) type = 'Tablet';
 
   // OS
   if (/Windows/i.test(ua)) os = 'Windows';
@@ -350,25 +350,26 @@ export default function ApplyPage() {
     setIsDetectingDevice(true);
     try {
       const info = getDeviceInfo();
-      console.log('📱 [Device] Detected:', info);
+      console.log('📱 [Device] Raw info:', info);
+
+      if (!info) {
+        toast.error('Device detection not supported in this browser.');
+        setIsDetectingDevice(false);
+        return;
+      }
 
       // Set device type checkbox
-      const deviceMap: Record<string, string> = {
-        'Android Phone': 'Android Phone',
-        'iPhone': 'iPhone',
-        'Laptop': 'Laptop',
-        'Desktop PC': 'Desktop PC',
-        'Tablet': 'Tablet',
-      };
-      const detectedDevice = deviceMap[info.type] || '';
-      const newDevices = detectedDevice ? (formData.devices.includes(detectedDevice) ? formData.devices : [...formData.devices, detectedDevice]) : formData.devices;
+      const detectedDevice = info.type;
+      const newDevices = formData.devices.includes(detectedDevice)
+        ? formData.devices
+        : [...formData.devices, detectedDevice];
 
-      // Build primary device string
-      let primaryName = info.os;
-      if (info.type === 'Android Phone') primaryName = 'Android (' + info.os + ')';
-      else if (info.type === 'iPhone') primaryName = 'iPhone (' + info.os + ')';
+      // Build primary device name
+      let primaryName = '';
+      if (info.type === 'Android Phone') primaryName = info.os;
+      else if (info.type === 'iPhone') primaryName = info.os;
       else if (info.type === 'Laptop') primaryName = info.os + ' Laptop';
-      else if (info.type === 'Desktop PC') primaryName = info.os + ' Desktop';
+      else if (info.type === 'Desktop PC') primaryName = info.os + ' PC';
       else if (info.type === 'Tablet') primaryName = info.os + ' Tablet';
 
       // Map deviceMemory to RAM select value
@@ -384,15 +385,16 @@ export default function ApplyPage() {
       }
 
       const updates: Partial<FormData> = { devices: newDevices };
-      if (primaryName && !formData.primaryDevice) updates.primaryDevice = primaryName;
-      if (ramValue && !formData.ramSize) updates.ramSize = ramValue;
+      if (primaryName) updates.primaryDevice = primaryName;
+      if (ramValue) updates.ramSize = ramValue;
 
       setFormData(prev => ({ ...prev, ...updates }));
 
+      console.log('📱 [Device] Applied updates:', updates);
       const details = [info.type, info.os, info.browser, info.memory ? `RAM: ${info.memory}` : '', `${info.cores} cores`, info.screen].filter(Boolean).join(' | ');
       toast.success('Device detected!', { description: details });
     } catch (err: any) {
-      console.error('📱 [Device] Error:', err.message);
+      console.error('📱 [Device] Error:', err);
       toast.error('Could not detect device info.');
     } finally {
       setIsDetectingDevice(false);
