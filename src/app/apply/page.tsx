@@ -25,6 +25,10 @@ import {
   MapPin,
   Smartphone,
   X,
+  Info,
+  Check,
+  AlertCircle,
+  ShieldCheck,
 } from 'lucide-react';
 import Image from 'next/image';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
@@ -33,6 +37,9 @@ import { db } from '@/lib/firebase';
 const MAX_IMAGE_SIZE = 1.5 * 1024 * 1024; // 1.5MB
 
 const TOTAL_STEPS = 7;
+
+// email regex pattern
+const EMAIL_REGEX = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/;
 
 // Helper: detect device info from browser (safe for SSR)
 function getDeviceInfo(): { type: string; os: string; browser: string; memory: string; cores: number; screen: string } | null {
@@ -86,14 +93,15 @@ async function reverseGeocode(lat: number, lon: number): Promise<{ state: string
   };
 }
 
+// step labels with descriptions for user guidance
 const stepLabels = [
-  { icon: '👤', label: 'Personal Info' },
-  { icon: '📍', label: 'Location' },
-  { icon: '🎮', label: 'Gaming Info' },
-  { icon: '💻', label: 'Device Info' },
-  { icon: '📸', label: 'Verification' },
-  { icon: '✍️', label: 'Message' },
-  { icon: '✅', label: 'Agreement' },
+  { icon: '👤', label: 'Personal Info', desc: 'Tell us about yourself' },
+  { icon: '📍', label: 'Location', desc: 'Where are you from?' },
+  { icon: '🎮', label: 'Gaming Info', desc: 'Your Free Fire journey' },
+  { icon: '💻', label: 'Device Info', desc: 'What do you play on?' },
+  { icon: '📸', label: 'Verification', desc: 'Upload your photos' },
+  { icon: '✍️', label: 'Message', desc: 'Why do you want to join?' },
+  { icon: '✅', label: 'Agreement', desc: 'Accept the terms' },
 ];
 
 interface FormData {
@@ -158,6 +166,12 @@ export default function ApplyPage() {
   const [selfiePreview, setSelfiePreview] = useState<string | null>(null);
   const [uploadingImage, setUploadingImage] = useState<string | null>(null);
 
+  // completed steps tracking (green checkmarks)
+  const [completedSteps, setCompletedSteps] = useState<Set<number>>(new Set());
+
+  // submit progress stages
+  const [submitStage, setSubmitStage] = useState<string>('');
+
   const updateField = (field: keyof FormData, value: string | string[]) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
@@ -180,11 +194,24 @@ export default function ApplyPage() {
   };
 
   const nextStep = () => {
-    if (step < TOTAL_STEPS) setStep(step + 1);
+    if (step < TOTAL_STEPS) {
+      // mark current step as completed
+      setCompletedSteps(prev => new Set(prev).add(step));
+      setStep(step + 1);
+    }
   };
 
   const prevStep = () => {
     if (step > 1) setStep(step - 1);
+  };
+
+  // step click handler — only allow completed steps or current step
+  const handleStepClick = (targetStep: number) => {
+    if (completedSteps.has(targetStep) || targetStep === step) {
+      setStep(targetStep);
+    } else {
+      toast.info(`Complete Step ${step} first`, { description: 'Please fill all required fields to proceed.' });
+    }
   };
 
   const validateCurrentStep = (): boolean => {
@@ -192,10 +219,22 @@ export default function ApplyPage() {
       case 1:
         if (!formData.fullName.trim()) { toast.error('Please enter your Full Name'); return false; }
         if (!formData.gender) { toast.error('Please select Gender'); return false; }
-        if (!formData.age || isNaN(Number(formData.age)) || Number(formData.age) < 10) { toast.error('Please enter a valid Age'); return false; }
-        if (!formData.mobile.trim() || formData.mobile.length < 10) { toast.error('Please enter a valid Mobile Number'); return false; }
-        if (!formData.whatsapp.trim() || formData.whatsapp.length < 10) { toast.error('Please enter a valid WhatsApp Number'); return false; }
-        if (!formData.gmail.trim() || !formData.gmail.includes('@')) { toast.error('Please enter a valid Gmail Address'); return false; }
+        if (!formData.age || isNaN(Number(formData.age)) || Number(formData.age) < 10 || Number(formData.age) > 99) {
+          toast.error('Please enter a valid Age', { description: 'Age must be between 10 and 99.' });
+          return false;
+        }
+        if (!formData.mobile.trim() || formData.mobile.length !== 10) {
+          toast.error('Please enter a valid Mobile Number', { description: 'Indian mobile number must be exactly 10 digits.' });
+          return false;
+        }
+        if (!formData.whatsapp.trim() || formData.whatsapp.length !== 10) {
+          toast.error('Please enter a valid WhatsApp Number', { description: 'Indian WhatsApp number must be exactly 10 digits.' });
+          return false;
+        }
+        if (!formData.gmail.trim() || !EMAIL_REGEX.test(formData.gmail.trim())) {
+          toast.error('Please enter a valid Gmail Address', { description: 'Enter a valid email like you@gmail.com' });
+          return false;
+        }
         return true;
       case 2:
         if (!formData.state.trim()) { toast.error('Please enter your State'); return false; }
@@ -237,6 +276,14 @@ export default function ApplyPage() {
     }
   };
 
+  // Helper: image size color indicator
+  const getImageSizeColor = (sizeInBytes: number): { color: string; bg: string; label: string } => {
+    const mb = sizeInBytes / (1024 * 1024);
+    if (mb <= 0.5) return { color: 'text-green-400', bg: 'bg-green-500/80', label: 'Good size' };
+    if (mb <= 1.0) return { color: 'text-amber-400', bg: 'bg-amber-500/80', label: 'Medium size' };
+    return { color: 'text-red-400', bg: 'bg-red-500/80', label: 'Near limit' };
+  };
+
   // Handle image file selection with size validation
   const handleImageSelect = (type: 'screenshot' | 'selfie') => {
     const input = document.createElement('input');
@@ -246,25 +293,33 @@ export default function ApplyPage() {
       const file = e.target.files?.[0];
       if (!file) return;
       if (file.size > MAX_IMAGE_SIZE) {
-        toast.error('Image too large!', { description: `Max size is 1.5MB. Your image is ${(file.size / 1024 / 1024).toFixed(1)}MB.` });
+        toast.error('Image too large!', { description: `Max size is 1.5MB. Your image is ${(file.size / 1024 / 1024).toFixed(1)}MB. Try compressing or selecting another image.` });
         return;
       }
+      const sizeInfo = getImageSizeColor(file.size);
       if (type === 'screenshot') {
         setFfScreenshot(file);
         setFfPreview(URL.createObjectURL(file));
-        toast.success('Screenshot selected');
+        toast.success('Screenshot selected', { description: `${sizeInfo.label} — ${(file.size / 1024).toFixed(0)}KB (${file.type.split('/')[1].toUpperCase()})` });
       } else {
         setSelfie(file);
         setSelfiePreview(URL.createObjectURL(file));
-        toast.success('Selfie selected');
+        toast.success('Selfie selected', { description: `${sizeInfo.label} — ${(file.size / 1024).toFixed(0)}KB (${file.type.split('/')[1].toUpperCase()})` });
       }
     };
     input.click();
   };
 
   const removeImage = (type: 'screenshot' | 'selfie') => {
-    if (type === 'screenshot') { setFfScreenshot(null); setFfPreview(null); }
-    else { setSelfie(null); setSelfiePreview(null); }
+    if (type === 'screenshot') {
+      setFfScreenshot(null);
+      setFfPreview(null);
+      toast.info('Screenshot removed', { description: 'You can upload a new one.' });
+    } else {
+      setSelfie(null);
+      setSelfiePreview(null);
+      toast.info('Selfie removed', { description: 'You can upload a new one.' });
+    }
   };
 
   // Convert File to base64 string
@@ -320,7 +375,11 @@ export default function ApplyPage() {
     console.log('🔥 [Submit] Started — uploading images via Cloud Function...');
 
     try {
-      // Upload images via Cloud Function
+      // Multi-stage submit progress
+      setSubmitStage('validating');
+      await new Promise(r => setTimeout(r, 600)); // small delay for UI
+
+      setSubmitStage('uploading-1');
       let ffScreenshotUrl = '';
       let selfieUrl = '';
 
@@ -331,6 +390,7 @@ export default function ApplyPage() {
       if (filesToUpload.length > 0) {
         setUploadingImage('uploading');
         const uploaded = await uploadImagesViaFunction(filesToUpload);
+        setSubmitStage('uploading-2');
         for (const item of uploaded) {
           if (item.label === 'screenshot') ffScreenshotUrl = item.url;
           if (item.label === 'selfie') selfieUrl = item.url;
@@ -340,6 +400,7 @@ export default function ApplyPage() {
         setUploadingImage(null);
       }
 
+      setSubmitStage('saving');
       console.log('🔥 [Submit] Saving to Firestore...');
 
       const applicationData: Record<string, any> = {
@@ -373,12 +434,17 @@ export default function ApplyPage() {
       const docRef = await addDoc(collection(db, 'applications'), applicationData);
       console.log('🔥 [Submit] SUCCESS! Doc ID:', docRef.id);
 
+      setSubmitStage('done');
+      await new Promise(r => setTimeout(r, 800));
+
       setIsSubmitted(true);
+      setSubmitStage('');
       toast.success('Application Submitted Successfully!', {
         description: 'EDMFire team will review your application soon.',
       });
     } catch (error: any) {
       console.error('🔥 [ERROR] Submission failed:', error);
+      setSubmitStage('');
       toast.error('Submission Failed', {
         description: error?.message || 'Something went wrong. Please try again.',
       });
@@ -391,6 +457,13 @@ export default function ApplyPage() {
   const progressPercent = (step / TOTAL_STEPS) * 100;
 
   const inputClass = "bg-[oklch(0.22,0.04,290)] border-[oklch(0.30,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)]";
+  const inputValidClass = "bg-[oklch(0.22,0.04,290)] border-green-500/50 text-white placeholder:text-[oklch(0.40,0.04,290)]";
+  const inputInvalidClass = "bg-[oklch(0.22,0.04,290)] border-red-500/50 text-white placeholder:text-[oklch(0.40,0.04,290)]";
+
+  // live validation helpers
+  const isPhoneValid = (phone: string) => /^\d{10}$/.test(phone);
+  const isEmailValid = (email: string) => EMAIL_REGEX.test(email.trim());
+  const isAgeValid = (age: string) => { const n = Number(age); return age !== '' && !isNaN(n) && n >= 10 && n <= 99; };
 
   // Auto-detect location
   const detectLocation = async () => {
@@ -490,6 +563,14 @@ export default function ApplyPage() {
     }
   };
 
+  // Helper component: info guide text below fields
+  const FieldGuide = ({ text }: { text: string }) => (
+    <p className="flex items-center gap-1 text-[10px] text-[oklch(0.50,0.04,290)]">
+      <Info className="w-3 h-3 shrink-0" />
+      <span>{text}</span>
+    </p>
+  );
+
   // Success screen
   if (isSubmitted) {
     return (
@@ -515,7 +596,7 @@ export default function ApplyPage() {
               Go to Login
             </a>
             <button
-              onClick={() => { setIsSubmitted(false); setFormData(initialFormData); setStep(1); setAgreements([false, false, false]); setFfScreenshot(null); setSelfie(null); setFfPreview(null); setSelfiePreview(null); }}
+              onClick={() => { setIsSubmitted(false); setFormData(initialFormData); setStep(1); setCompletedSteps(new Set()); setAgreements([false, false, false]); setFfScreenshot(null); setSelfie(null); setFfPreview(null); setSelfiePreview(null); }}
               className="flex-1 h-12 rounded-xl bg-[oklch(0.22,0.04,290)] border border-[oklch(0.30,0.06,290)] text-[oklch(0.70,0.04,290)] font-medium"
             >
               New Application
@@ -544,38 +625,53 @@ export default function ApplyPage() {
       </header>
 
       <div className="max-w-2xl mx-auto px-4 lg:px-6 py-6 space-y-5">
-        {/* progress bar */}
+        {/* progress bar with green checkmarks */}
         <div className="space-y-2">
           <div className="flex justify-between text-[10px] text-[oklch(0.55,0.04,290)] font-medium">
             <span>Step {step} of {TOTAL_STEPS}</span>
             <span>{Math.round(progressPercent)}%</span>
           </div>
-          <div className="h-2 rounded-full bg-[oklch(0.20,0.04,290)] overflow-hidden">
+          <div className="h-2.5 rounded-full bg-[oklch(0.20,0.04,290)] overflow-hidden">
             <div
-              className="h-full rounded-full bg-gradient-to-r from-violet-500 to-indigo-600 transition-all duration-500"
+              className="h-full rounded-full bg-gradient-to-r from-green-400 via-violet-500 to-indigo-600 transition-all duration-500"
               style={{ width: `${progressPercent}%` }}
             />
           </div>
         </div>
 
-        {/* step indicators */}
+        {/* step indicators with green checkmarks and disabled future steps */}
         <div className="flex gap-1.5 overflow-x-auto pb-1">
-          {stepLabels.map((s, i) => (
-            <button
-              key={i}
-              onClick={() => setStep(i + 1)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-medium whitespace-nowrap shrink-0 transition-all ${
-                i + 1 === step
-                  ? 'bg-violet-500/20 text-violet-300 border border-violet-500/30'
-                  : i + 1 < step
-                  ? 'bg-green-500/10 text-green-400 border border-green-500/20'
-                  : 'bg-[oklch(0.18,0.04,290)] text-[oklch(0.45,0.04,290)] border border-[oklch(0.25,0.05,290)]'
-              }`}
-            >
-              <span>{s.icon}</span>
-              <span className="hidden sm:inline">{s.label}</span>
-            </button>
-          ))}
+          {stepLabels.map((s, i) => {
+            const stepNum = i + 1;
+            const isCompleted = completedSteps.has(stepNum);
+            const isCurrent = stepNum === step;
+            const isFuture = stepNum > step && !isCompleted;
+            return (
+              <button
+                key={i}
+                onClick={() => handleStepClick(stepNum)}
+                disabled={isFuture}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-medium whitespace-nowrap shrink-0 transition-all ${
+                  isFuture
+                    ? 'bg-[oklch(0.18,0.04,290)] text-[oklch(0.35,0.04,290)] border border-[oklch(0.22,0.05,290)] cursor-not-allowed opacity-50'
+                    : isCurrent
+                    ? 'bg-violet-500/20 text-violet-300 border border-violet-500/30'
+                    : 'bg-green-500/10 text-green-400 border border-green-500/20'
+                }`}
+              >
+                <span className="w-4 h-4 flex items-center justify-center">
+                  {isCompleted ? (
+                    <Check className="w-3.5 h-3.5 text-green-400" />
+                  ) : isFuture ? (
+                    <span className="text-[oklch(0.35,0.04,290)]">{s.icon}</span>
+                  ) : (
+                    <span>{s.icon}</span>
+                  )}
+                </span>
+                <span className="hidden sm:inline">{s.label}</span>
+              </button>
+            );
+          })}
         </div>
 
         {/* form card */}
@@ -583,20 +679,26 @@ export default function ApplyPage() {
           <CardHeader className="pb-3">
             <CardTitle className="text-base text-white flex items-center gap-2">
               <span className="text-lg">{stepLabels[step - 1].icon}</span>
-              Step {step} — {stepLabels[step - 1].label}
+              <div>
+                <span>Step {step} — {stepLabels[step - 1].label}</span>
+                <p className="text-[10px] text-[oklch(0.55,0.04,290)] font-normal mt-0.5">{stepLabels[step - 1].desc}</p>
+              </div>
             </CardTitle>
           </CardHeader>
           <CardContent>
             {/* STEP 1 — Personal Info */}
             {step === 1 && (
               <div className="space-y-4">
-                <div className="space-y-2">
+                {/* Full Name */}
+                <div className="space-y-1.5">
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     Full Name <span className="text-red-400">*</span>
                   </Label>
                   <Input value={formData.fullName} onChange={(e) => updateField('fullName', e.target.value)} placeholder="Enter your full name" className={inputClass} />
+                  <FieldGuide text="Enter your real name as per your ID proof" />
                 </div>
-                <div className="space-y-2">
+                {/* Gender */}
+                <div className="space-y-1.5">
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     Gender <span className="text-red-400">*</span>
                   </Label>
@@ -608,32 +710,143 @@ export default function ApplyPage() {
                       <SelectItem value="other">Other</SelectItem>
                     </SelectContent>
                   </Select>
+                  <FieldGuide text="Select your gender identity" />
                 </div>
-                <div className="space-y-2">
+                {/* Age with live validation */}
+                <div className="space-y-1.5">
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     Age <span className="text-red-400">*</span>
                   </Label>
-                  <Input type="number" value={formData.age} onChange={(e) => updateField('age', e.target.value)} placeholder="e.g. 20" className={inputClass} />
+                  <Input
+                    type="number"
+                    min={10}
+                    max={99}
+                    value={formData.age}
+                    onChange={(e) => updateField('age', e.target.value.replace(/[^0-9]/g, '').slice(0, 2))}
+                    placeholder="e.g. 20"
+                    className={
+                      formData.age === '' ? inputClass
+                      : isAgeValid(formData.age) ? inputValidClass
+                      : inputInvalidClass
+                    }
+                  />
+                  <div className="flex items-center justify-between">
+                    {formData.age !== '' && (
+                      <p className={`text-[10px] flex items-center gap-1 ${
+                        isAgeValid(formData.age) ? 'text-green-400' : 'text-red-400'
+                      }`}>
+                        {isAgeValid(formData.age) ? <Check className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
+                        {isAgeValid(formData.age) ? 'Valid age' : 'Age must be 10-99'}
+                      </p>
+                    ) : (
+                      <FieldGuide text="Minimum age: 10, Maximum: 99" />
+                    )}
+                  </div>
                 </div>
+                {/* Mobile + WhatsApp with 10-digit tracking */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                       Mobile Number <span className="text-red-400">*</span>
                     </Label>
-                    <Input type="tel" value={formData.mobile} onChange={(e) => updateField('mobile', e.target.value)} placeholder="e.g. 9876543210" className={inputClass} />
+                    <div className="relative">
+                      <Input
+                        type="tel"
+                        value={formData.mobile}
+                        onChange={(e) => updateField('mobile', e.target.value.replace(/[^0-9]/g, '').slice(0, 10))}
+                        placeholder="e.g. 9876543210"
+                        className={
+                          formData.mobile === '' ? inputClass
+                          : isPhoneValid(formData.mobile) ? inputValidClass
+                          : inputInvalidClass
+                        }
+                      />
+                      {formData.mobile.length > 0 && (
+                        <span className={`absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-mono ${
+                          formData.mobile.length === 10 ? 'text-green-400' : formData.mobile.length >= 8 ? 'text-amber-400' : 'text-[oklch(0.45,0.04,290)]'
+                        }`}>
+                          {formData.mobile.length}/10
+                        </span>
+                      )}
+                    </div>
+                    {formData.mobile.length > 0 && (
+                      <p className={`text-[10px] flex items-center gap-1 ${
+                        isPhoneValid(formData.mobile) ? 'text-green-400' : 'text-amber-400'
+                      }`}>
+                        {isPhoneValid(formData.mobile) ? <Check className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
+                        {isPhoneValid(formData.mobile) ? 'Valid number' : `${10 - formData.mobile.length} more digit${10 - formData.mobile.length > 1 ? 's' : ''} needed`}
+                      </p>
+                    )}
                   </div>
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                       WhatsApp Number <span className="text-red-400">*</span>
                     </Label>
-                    <Input type="tel" value={formData.whatsapp} onChange={(e) => updateField('whatsapp', e.target.value)} placeholder="e.g. 9876543210" className={inputClass} />
+                    <div className="relative">
+                      <Input
+                        type="tel"
+                        value={formData.whatsapp}
+                        onChange={(e) => updateField('whatsapp', e.target.value.replace(/[^0-9]/g, '').slice(0, 10))}
+                        placeholder="e.g. 9876543210"
+                        className={
+                          formData.whatsapp === '' ? inputClass
+                          : isPhoneValid(formData.whatsapp) ? inputValidClass
+                          : inputInvalidClass
+                        }
+                      />
+                      {formData.whatsapp.length > 0 && (
+                        <span className={`absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-mono ${
+                          formData.whatsapp.length === 10 ? 'text-green-400' : formData.whatsapp.length >= 8 ? 'text-amber-400' : 'text-[oklch(0.45,0.04,290)]'
+                        }`}>
+                          {formData.whatsapp.length}/10
+                        </span>
+                      )}
+                    </div>
+                    {formData.whatsapp.length > 0 && (
+                      <p className={`text-[10px] flex items-center gap-1 ${
+                        isPhoneValid(formData.whatsapp) ? 'text-green-400' : 'text-amber-400'
+                      }`}>
+                        {isPhoneValid(formData.whatsapp) ? <Check className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
+                        {isPhoneValid(formData.whatsapp) ? 'Valid number' : `${10 - formData.whatsapp.length} more digit${10 - formData.whatsapp.length > 1 ? 's' : ''} needed`}
+                      </p>
+                    )}
                   </div>
                 </div>
-                <div className="space-y-2">
+                <FieldGuide text="Indian mobile numbers must be exactly 10 digits (without +91 or 0)" />
+                {/* Email with live validation */}
+                <div className="space-y-1.5">
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     Gmail Address <span className="text-red-400">*</span>
                   </Label>
-                  <Input type="email" value={formData.gmail} onChange={(e) => updateField('gmail', e.target.value)} placeholder="e.g. you@gmail.com" className={inputClass} />
+                  <div className="relative">
+                    <Input
+                      type="email"
+                      value={formData.gmail}
+                      onChange={(e) => updateField('gmail', e.target.value)}
+                      placeholder="e.g. you@gmail.com"
+                      className={
+                        formData.gmail.trim() === '' ? inputClass
+                        : isEmailValid(formData.gmail) ? inputValidClass
+                        : inputInvalidClass
+                      }
+                    />
+                    {formData.gmail.trim().length > 0 && (
+                      <span className={`absolute right-3 top-1/2 -translate-y-1/2`}>
+                        {isEmailValid(formData.gmail)
+                          ? <Check className="w-4 h-4 text-green-400" />
+                          : <AlertCircle className="w-4 h-4 text-red-400" />
+                        }
+                      </span>
+                    )}
+                  </div>
+                  {formData.gmail.trim().length > 0 && (
+                    <p className={`text-[10px] flex items-center gap-1 ${
+                      isEmailValid(formData.gmail) ? 'text-green-400' : 'text-red-400'
+                    }`}>
+                      {isEmailValid(formData.gmail) ? 'Valid email format' : 'Enter a valid email (e.g. name@gmail.com)'}
+                    </p>
+                  )}
+                  <FieldGuide text="We will use this email for official communication" />
                 </div>
               </div>
             )}
@@ -655,23 +868,26 @@ export default function ApplyPage() {
                   )}
                 </button>
                 <p className="text-[10px] text-[oklch(0.45,0.04,290)] text-center">Tap the button above to auto-fill your location, or fill manually below</p>
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     State <span className="text-red-400">*</span>
                   </Label>
                   <Input value={formData.state} onChange={(e) => updateField('state', e.target.value)} placeholder="e.g. Maharashtra" className={inputClass} />
+                  <FieldGuide text="Enter your state name" />
                 </div>
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     District <span className="text-red-400">*</span>
                   </Label>
                   <Input value={formData.district} onChange={(e) => updateField('district', e.target.value)} placeholder="e.g. Pune" className={inputClass} />
+                  <FieldGuide text="Enter your district name" />
                 </div>
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     Village / Town / City <span className="text-red-400">*</span>
                   </Label>
                   <Input value={formData.city} onChange={(e) => updateField('city', e.target.value)} placeholder="e.g. Shivajinagar" className={inputClass} />
+                  <FieldGuide text="Enter your village, town or city name" />
                 </div>
               </div>
             )}
@@ -679,13 +895,14 @@ export default function ApplyPage() {
             {/* STEP 3 — Gaming Info */}
             {step === 3 && (
               <div className="space-y-4">
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     Free Fire Nickname <span className="text-[oklch(0.45,0.04,290)]">(optional)</span>
                   </Label>
                   <Input value={formData.ffNickname} onChange={(e) => updateField('ffNickname', e.target.value)} placeholder="Your in-game name" className={inputClass} />
+                  <FieldGuide text="Your Free Fire in-game nickname (optional but helpful)" />
                 </div>
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     How Many Years Have You Played Free Fire? <span className="text-red-400">*</span>
                   </Label>
@@ -699,7 +916,7 @@ export default function ApplyPage() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     Have You Hosted Tournaments Before? <span className="text-red-400">*</span>
                   </Label>
@@ -712,14 +929,15 @@ export default function ApplyPage() {
                   </Select>
                 </div>
                 {formData.hostedBefore === 'yes' && (
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                       Explain Your Experience <span className="text-red-400">*</span>
                     </Label>
                     <Textarea value={formData.hostingExperience} onChange={(e) => updateField('hostingExperience', e.target.value)} placeholder="Describe your tournament hosting experience..." rows={4} className={`${inputClass} resize-none`} />
+                    <FieldGuide text="Mention platforms, number of tournaments, room sizes etc." />
                   </div>
                 )}
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     Which Modes Can You Manage? <span className="text-red-400">*</span>
                   </Label>
@@ -731,8 +949,9 @@ export default function ApplyPage() {
                       <SelectItem value="lw">Lone Wolf</SelectItem>
                     </SelectContent>
                   </Select>
+                  <FieldGuide text="Select the game mode you are most comfortable hosting" />
                 </div>
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     Your Current Rank <span className="text-red-400">*</span>
                   </Label>
@@ -748,6 +967,7 @@ export default function ApplyPage() {
                       <SelectItem value="grandmaster">Grandmaster</SelectItem>
                     </SelectContent>
                   </Select>
+                  <FieldGuide text="Your current Free Fire push rank" />
                 </div>
               </div>
             )}
@@ -769,9 +989,9 @@ export default function ApplyPage() {
                   )}
                 </button>
                 <p className="text-[10px] text-[oklch(0.45,0.04,290)] text-center">Tap to auto-detect your device info, or fill manually below</p>
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
-                    Which Device Do You Use? <span className="text-red-400">*</span>
+                    Which Device Do You Use? <span className="text-red-400">*</span> <span className="text-[oklch(0.45,0.04,290)]">(select multiple if applicable)</span>
                   </Label>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                     {['Android Phone', 'iPhone', 'Laptop', 'Desktop PC', 'Tablet'].map((device) => (
@@ -788,15 +1008,17 @@ export default function ApplyPage() {
                       </button>
                     ))}
                   </div>
+                  <FieldGuide text="Select all devices you use to play Free Fire" />
                 </div>
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     Primary Device Name <span className="text-red-400">*</span>
                   </Label>
                   <Input value={formData.primaryDevice} onChange={(e) => updateField('primaryDevice', e.target.value)} placeholder="e.g. Vivo T2, HP Laptop, ASUS ROG" className={inputClass} />
+                  <FieldGuide text="Your main device model name" />
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                       RAM Size <span className="text-red-400">*</span>
                     </Label>
@@ -811,8 +1033,9 @@ export default function ApplyPage() {
                         <SelectItem value="12+">12GB+</SelectItem>
                       </SelectContent>
                     </Select>
+                    <FieldGuide text="Go to Settings > About Phone to check RAM" />
                   </div>
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                       Internet Quality <span className="text-red-400">*</span>
                     </Label>
@@ -824,9 +1047,10 @@ export default function ApplyPage() {
                         <SelectItem value="excellent">Excellent</SelectItem>
                       </SelectContent>
                     </Select>
+                    <FieldGuide text="Average = frequent lag, Good = smooth, Excellent = no lag ever" />
                   </div>
                 </div>
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     Can You Screen Record Matches? <span className="text-red-400">*</span>
                   </Label>
@@ -837,6 +1061,7 @@ export default function ApplyPage() {
                       <SelectItem value="no">No</SelectItem>
                     </SelectContent>
                   </Select>
+                  <FieldGuide text="Required for recording tournament matches as proof" />
                 </div>
               </div>
             )}
@@ -844,13 +1069,17 @@ export default function ApplyPage() {
             {/* STEP 5 — Verification (Image Upload) */}
             {step === 5 && (
               <div className="space-y-4">
-                <div className="rounded-xl bg-violet-500/5 border border-violet-500/20 p-3">
-                  <p className="text-[10px] text-[oklch(0.60,0.04,290)]">
-                    Upload your Free Fire profile screenshot and a selfie for verification. Max image size: 1.5MB.
-                  </p>
+                <div className="rounded-xl bg-violet-500/5 border border-violet-500/20 p-3 space-y-1">
+                  <p className="text-[10px] text-[oklch(0.60,0.04,290)] font-medium">Upload your Free Fire profile screenshot and a selfie for verification.</p>
+                  <p className="text-[10px] text-[oklch(0.50,0.04,290)]">Max image size: 1.5MB. Formats: PNG, JPG, WEBP.</p>
+                  <div className="flex gap-3 pt-1">
+                    <span className="text-[9px] text-green-400">● &lt; 500KB = Good</span>
+                    <span className="text-[9px] text-amber-400">● 500KB-1MB = Medium</span>
+                    <span className="text-[9px] text-red-400">● 1-1.5MB = Near limit</span>
+                  </div>
                 </div>
                 {/* FF Screenshot */}
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     Free Fire Profile Screenshot <span className="text-red-400">*</span>
                   </Label>
@@ -864,8 +1093,8 @@ export default function ApplyPage() {
                       >
                         <X className="w-4 h-4" />
                       </button>
-                      <div className="absolute bottom-2 left-2 px-2 py-0.5 rounded bg-green-500/80 text-[10px] text-white font-medium">
-                        {(ffScreenshot!.size / 1024).toFixed(0)}KB
+                      <div className={`absolute bottom-2 left-2 px-2 py-0.5 rounded ${getImageSizeColor(ffScreenshot!.size).bg} text-[10px] text-white font-medium`}>
+                        {(ffScreenshot!.size / 1024).toFixed(0)}KB — {getImageSizeColor(ffScreenshot!.size).label}
                       </div>
                     </div>
                   ) : (
@@ -884,9 +1113,10 @@ export default function ApplyPage() {
                       <p className="text-[10px] text-[oklch(0.40,0.04,290)]">PNG, JPG, WEBP — Max 1.5MB</p>
                     </button>
                   )}
+                  <FieldGuide text="Screenshot must show your FF profile with visible ID and name" />
                 </div>
                 {/* Selfie */}
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     Your Selfie <span className="text-red-400">*</span>
                   </Label>
@@ -900,8 +1130,8 @@ export default function ApplyPage() {
                       >
                         <X className="w-4 h-4" />
                       </button>
-                      <div className="absolute bottom-2 left-2 px-2 py-0.5 rounded bg-green-500/80 text-[10px] text-white font-medium">
-                        {(selfie!.size / 1024).toFixed(0)}KB
+                      <div className={`absolute bottom-2 left-2 px-2 py-0.5 rounded ${getImageSizeColor(selfie!.size).bg} text-[10px] text-white font-medium`}>
+                        {(selfie!.size / 1024).toFixed(0)}KB — {getImageSizeColor(selfie!.size).label}
                       </div>
                     </div>
                   ) : (
@@ -920,6 +1150,7 @@ export default function ApplyPage() {
                       <p className="text-[10px] text-[oklch(0.40,0.04,290)]">PNG, JPG, WEBP — Max 1.5MB</p>
                     </button>
                   )}
+                  <FieldGuide text="Clear selfie holding a paper with your FF nickname written on it" />
                 </div>
               </div>
             )}
@@ -927,11 +1158,17 @@ export default function ApplyPage() {
             {/* STEP 6 — Message */}
             {step === 6 && (
               <div className="space-y-4">
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     Why Do You Want To Become Host? <span className="text-red-400">*</span>
                   </Label>
                   <Textarea value={formData.whyJoin} onChange={(e) => updateField('whyJoin', e.target.value)} placeholder="Write in detail why you want to become an EDMFire host..." rows={8} className={`${inputClass} resize-none`} />
+                  <div className="flex items-center justify-between">
+                    <FieldGuide text="Write at least 2-3 lines explaining your motivation" />
+                    <span className={`text-[10px] font-mono ${formData.whyJoin.length >= 50 ? 'text-green-400' : 'text-[oklch(0.45,0.04,290)]'}`}>
+                      {formData.whyJoin.length} chars
+                    </span>
+                  </div>
                 </div>
               </div>
             )}
@@ -1016,6 +1253,55 @@ export default function ApplyPage() {
           </p>
         </div>
       </div>
+
+      {/* Multi-stage submit progress overlay */}
+      {isSubmitting && submitStage && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-[oklch(0.18,0.04,290)] border border-[oklch(0.30,0.06,290)] rounded-2xl p-8 max-w-sm w-full mx-4 space-y-6 text-center">
+            <div className="w-16 h-16 mx-auto rounded-full bg-violet-500/10 border border-violet-500/30 flex items-center justify-center">
+              {submitStage === 'done' ? (
+                <CheckCircle2 className="w-8 h-8 text-green-400" />
+              ) : (
+                <Loader2 className="w-8 h-8 text-violet-400 animate-spin" />
+              )}
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-lg font-bold text-white">
+                {submitStage === 'validating' && 'Validating your data...'}
+                {submitStage === 'uploading-1' && 'Uploading Screenshot (1/2)...'}
+                {submitStage === 'uploading-2' && 'Uploading Selfie (2/2)...'}
+                {submitStage === 'saving' && 'Saving to database...'}
+                {submitStage === 'done' && 'All Done!'}
+              </h3>
+              <p className="text-xs text-[oklch(0.55,0.04,290)]">
+                {submitStage === 'validating' && 'Checking all fields are correct'}
+                {submitStage === 'uploading-1' && 'Please wait while we upload your images'}
+                {submitStage === 'uploading-2' && 'Almost there...'}
+                {submitStage === 'saving' && 'Sending your application to EDMFire'}
+                {submitStage === 'done' && 'Your application has been submitted!'}
+              </p>
+            </div>
+            {/* progress dots */}
+            <div className="flex items-center justify-center gap-2">
+              {['validating', 'uploading-1', 'uploading-2', 'saving', 'done'].map((stage) => {
+                const stageOrder = ['validating', 'uploading-1', 'uploading-2', 'saving', 'done'];
+                const currentIdx = stageOrder.indexOf(submitStage);
+                const thisIdx = stageOrder.indexOf(stage);
+                const isComplete = thisIdx < currentIdx;
+                const isCurrent = thisIdx === currentIdx;
+                return (
+                  <div
+                    key={stage}
+                    className={`w-2.5 h-2.5 rounded-full transition-all ${
+                      isComplete ? 'bg-green-400' : isCurrent ? 'bg-violet-400 animate-pulse' : 'bg-[oklch(0.30,0.06,290)]'
+                    }`}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
