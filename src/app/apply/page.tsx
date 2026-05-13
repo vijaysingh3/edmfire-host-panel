@@ -24,10 +24,14 @@ import {
   CheckCircle2,
   MapPin,
   Smartphone,
+  X,
 } from 'lucide-react';
 import Image from 'next/image';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { db, storage } from '@/lib/firebase';
+
+const MAX_IMAGE_SIZE = 1.5 * 1024 * 1024; // 1.5MB
 
 const TOTAL_STEPS = 7;
 
@@ -114,7 +118,6 @@ interface FormData {
   ramSize: string;
   internetQuality: string;
   canScreenRecord: string;
-  discordTelegram: string;
   whyJoin: string;
 }
 
@@ -139,8 +142,7 @@ const initialFormData: FormData = {
   ramSize: '',
   internetQuality: '',
   canScreenRecord: '',
-  discordTelegram: '',
-  whyJoin: '',
+  whyJoin: '';
 };
 
 export default function ApplyPage() {
@@ -151,6 +153,11 @@ export default function ApplyPage() {
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isDetectingLocation, setIsDetectingLocation] = useState(false);
   const [isDetectingDevice, setIsDetectingDevice] = useState(false);
+  const [ffScreenshot, setFfScreenshot] = useState<File | null>(null);
+  const [selfie, setSelfie] = useState<File | null>(null);
+  const [ffPreview, setFfPreview] = useState<string | null>(null);
+  const [selfiePreview, setSelfiePreview] = useState<string | null>(null);
+  const [uploadingImage, setUploadingImage] = useState<string | null>(null);
 
   const updateField = (field: keyof FormData, value: string | string[]) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
@@ -213,6 +220,10 @@ export default function ApplyPage() {
         if (!formData.internetQuality) { toast.error('Please select internet quality'); return false; }
         if (!formData.canScreenRecord) { toast.error('Please select screen record option'); return false; }
         return true;
+      case 5:
+        if (!ffScreenshot) { toast.error('Please upload your FF Profile Screenshot'); return false; }
+        if (!selfie) { toast.error('Please upload your Selfie'); return false; }
+        return true;
       case 6:
         if (!formData.whyJoin.trim()) { toast.error('Please write why you want to become a host'); return false; }
         return true;
@@ -227,6 +238,36 @@ export default function ApplyPage() {
     }
   };
 
+  // Handle image file selection with size validation
+  const handleImageSelect = (type: 'screenshot' | 'selfie') => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/png,image/jpeg,image/webp';
+    input.onchange = async (e: any) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      if (file.size > MAX_IMAGE_SIZE) {
+        toast.error('Image too large!', { description: `Max size is 1.5MB. Your image is ${(file.size / 1024 / 1024).toFixed(1)}MB.` });
+        return;
+      }
+      if (type === 'screenshot') {
+        setFfScreenshot(file);
+        setFfPreview(URL.createObjectURL(file));
+        toast.success('Screenshot selected');
+      } else {
+        setSelfie(file);
+        setSelfiePreview(URL.createObjectURL(file));
+        toast.success('Selfie selected');
+      }
+    };
+    input.click();
+  };
+
+  const removeImage = (type: 'screenshot' | 'selfie') => {
+    if (type === 'screenshot') { setFfScreenshot(null); setFfPreview(null); }
+    else { setSelfie(null); setSelfiePreview(null); }
+  };
+
   const handleSubmit = async () => {
     if (!agreements.every(Boolean)) {
       toast.error('Please accept all agreements');
@@ -234,25 +275,44 @@ export default function ApplyPage() {
     }
 
     setIsSubmitting(true);
-
-    console.log('🔥 [Step 1] Submit started — form data:', {
-      fullName: formData.fullName,
-      gmail: formData.gmail,
-      mobile: formData.mobile,
-      state: formData.state,
-      gameModes: formData.gameModes,
-      currentRank: formData.currentRank,
-      devices: formData.devices,
-    });
+    console.log('🔥 [Submit] Started — uploading images first...');
 
     try {
-      console.log('🔥 [Step 2] Creating Firestore document in "applications" collection...');
+      // Upload images to Firebase Storage
+      let ffScreenshotUrl = '';
+      let selfieUrl = '';
+      const mobile = formData.mobile.trim();
+      const ts = Date.now();
 
-      const applicationData = {
+      // Upload FF Screenshot
+      if (ffScreenshot) {
+        setUploadingImage('screenshot');
+        const fileExt = ffScreenshot.name.split('.').pop() || 'jpg';
+        const storageRef = ref(storage, `hostRequests/${mobile}_${ts}_screenshot.${fileExt}`);
+        await uploadBytes(storageRef, ffScreenshot);
+        ffScreenshotUrl = await getDownloadURL(storageRef);
+        console.log('📸 [Upload] Screenshot URL:', ffScreenshotUrl);
+        setUploadingImage(null);
+      }
+
+      // Upload Selfie
+      if (selfie) {
+        setUploadingImage('selfie');
+        const fileExt = selfie.name.split('.').pop() || 'jpg';
+        const storageRef = ref(storage, `hostRequests/${mobile}_${ts}_selfie.${fileExt}`);
+        await uploadBytes(storageRef, selfie);
+        selfieUrl = await getDownloadURL(storageRef);
+        console.log('📸 [Upload] Selfie URL:', selfieUrl);
+        setUploadingImage(null);
+      }
+
+      console.log('🔥 [Submit] Saving to Firestore...');
+
+      const applicationData: Record<string, any> = {
         fullName: formData.fullName.trim(),
         gender: formData.gender,
         age: Number(formData.age),
-        mobile: formData.mobile.trim(),
+        mobile,
         whatsapp: formData.whatsapp.trim(),
         gmail: formData.gmail.trim().toLowerCase(),
         state: formData.state.trim(),
@@ -269,33 +329,28 @@ export default function ApplyPage() {
         ramSize: formData.ramSize,
         internetQuality: formData.internetQuality,
         canScreenRecord: formData.canScreenRecord,
-        discordTelegram: formData.discordTelegram.trim(),
         whyJoin: formData.whyJoin.trim(),
         status: 'pending',
         createdAt: serverTimestamp(),
       };
-
-      console.log('🔥 [Step 3] Data prepared, sending to Firestore...');
+      if (ffScreenshotUrl) applicationData.ffScreenshotUrl = ffScreenshotUrl;
+      if (selfieUrl) applicationData.selfieUrl = selfieUrl;
 
       const docRef = await addDoc(collection(db, 'applications'), applicationData);
-
-      console.log('🔥 [Step 4] SUCCESS! Document saved with ID:', docRef.id);
-      console.log('🔥 [Step 4] Firestore path: applications/', docRef.id);
+      console.log('🔥 [Submit] SUCCESS! Doc ID:', docRef.id);
 
       setIsSubmitted(true);
       toast.success('Application Submitted Successfully!', {
         description: 'EDMFire team will review your application soon.',
       });
     } catch (error: any) {
-      console.error('🔥 [ERROR] Firestore write failed!');
-      console.error('🔥 [ERROR] Code:', error?.code);
-      console.error('🔥 [ERROR] Message:', error?.message);
-      console.error('🔥 [ERROR] Full error:', error);
+      console.error('🔥 [ERROR] Submission failed:', error);
       toast.error('Submission Failed', {
         description: error?.message || 'Something went wrong. Please try again.',
       });
     } finally {
       setIsSubmitting(false);
+      setUploadingImage(null);
     }
   };
 
@@ -426,7 +481,7 @@ export default function ApplyPage() {
               Go to Login
             </a>
             <button
-              onClick={() => { setIsSubmitted(false); setFormData(initialFormData); setStep(1); setAgreements([false, false, false]); }}
+              onClick={() => { setIsSubmitted(false); setFormData(initialFormData); setStep(1); setAgreements([false, false, false]); setFfScreenshot(null); setSelfie(null); setFfPreview(null); setSelfiePreview(null); }}
               className="flex-1 h-12 rounded-xl bg-[oklch(0.22,0.04,290)] border border-[oklch(0.30,0.06,290)] text-[oklch(0.70,0.04,290)] font-medium"
             >
               New Application
@@ -737,56 +792,100 @@ export default function ApplyPage() {
                     </Select>
                   </div>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label className="text-xs text-[oklch(0.70,0.04,290)]">
-                      Can You Screen Record Matches? <span className="text-red-400">*</span>
-                    </Label>
-                    <Select value={formData.canScreenRecord} onValueChange={(v) => updateField('canScreenRecord', v)}>
-                      <SelectTrigger className={inputClass}><SelectValue placeholder="Select" /></SelectTrigger>
-                      <SelectContent className="bg-[oklch(0.20,0.04,290)] border-[oklch(0.30,0.06,290)]">
-                        <SelectItem value="yes">Yes</SelectItem>
-                        <SelectItem value="no">No</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-xs text-[oklch(0.70,0.04,290)]">
-                      Discord / Telegram Username
-                    </Label>
-                    <Input value={formData.discordTelegram} onChange={(e) => updateField('discordTelegram', e.target.value)} placeholder="e.g. @username" className={inputClass} />
-                  </div>
+                <div className="space-y-2">
+                  <Label className="text-xs text-[oklch(0.70,0.04,290)]">
+                    Can You Screen Record Matches? <span className="text-red-400">*</span>
+                  </Label>
+                  <Select value={formData.canScreenRecord} onValueChange={(v) => updateField('canScreenRecord', v)}>
+                    <SelectTrigger className={inputClass}><SelectValue placeholder="Select" /></SelectTrigger>
+                    <SelectContent className="bg-[oklch(0.20,0.04,290)] border-[oklch(0.30,0.06,290)]">
+                      <SelectItem value="yes">Yes</SelectItem>
+                      <SelectItem value="no">No</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
             )}
 
-            {/* STEP 5 — Verification */}
+            {/* STEP 5 — Verification (Image Upload) */}
             {step === 5 && (
               <div className="space-y-4">
-                <div className="rounded-xl bg-violet-500/5 border border-violet-500/20 p-4">
-                  <p className="text-xs text-[oklch(0.60,0.04,290)]">
-                    Image upload will be available soon. For now, please skip this step.
+                <div className="rounded-xl bg-violet-500/5 border border-violet-500/20 p-3">
+                  <p className="text-[10px] text-[oklch(0.60,0.04,290)]">
+                    Upload your Free Fire profile screenshot and a selfie for verification. Max image size: 1.5MB.
                   </p>
                 </div>
+                {/* FF Screenshot */}
                 <div className="space-y-2">
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
-                    Upload Free Fire Profile Screenshot <span className="text-[oklch(0.45,0.04,290)]">(coming soon)</span>
+                    Free Fire Profile Screenshot <span className="text-red-400">*</span>
                   </Label>
-                  <div className="border-2 border-dashed border-[oklch(0.30,0.06,290)] rounded-xl p-6 flex flex-col items-center gap-2 bg-[oklch(0.20,0.04,290)] opacity-50">
-                    <Upload className="w-8 h-8 text-[oklch(0.45,0.04,290)]" />
-                    <p className="text-xs text-[oklch(0.55,0.04,290)]">Click to upload or drag & drop</p>
-                    <p className="text-[10px] text-[oklch(0.40,0.04,290)]">PNG, JPG up to 5MB</p>
-                  </div>
+                  {ffPreview ? (
+                    <div className="relative rounded-xl overflow-hidden border border-[oklch(0.30,0.06,290)]">
+                      <img src={ffPreview} alt="FF Screenshot" className="w-full h-48 object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => removeImage('screenshot')}
+                        className="absolute top-2 right-2 w-7 h-7 rounded-full bg-red-500/80 text-white flex items-center justify-center hover:bg-red-600 transition-colors"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                      <div className="absolute bottom-2 left-2 px-2 py-0.5 rounded bg-green-500/80 text-[10px] text-white font-medium">
+                        {(ffScreenshot!.size / 1024).toFixed(0)}KB
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleImageSelect('screenshot')}
+                      disabled={uploadingImage === 'screenshot'}
+                      className="w-full border-2 border-dashed border-[oklch(0.30,0.06,290)] hover:border-violet-500/40 rounded-xl p-6 flex flex-col items-center gap-2 bg-[oklch(0.20,0.04,290)] transition-all"
+                    >
+                      {uploadingImage === 'screenshot' ? (
+                        <Loader2 className="w-8 h-8 text-violet-400 animate-spin" />
+                      ) : (
+                        <Upload className="w-8 h-8 text-[oklch(0.45,0.04,290)]" />
+                      )}
+                      <p className="text-xs text-[oklch(0.55,0.04,290)]">Tap to upload FF Profile Screenshot</p>
+                      <p className="text-[10px] text-[oklch(0.40,0.04,290)]">PNG, JPG, WEBP — Max 1.5MB</p>
+                    </button>
+                  )}
                 </div>
+                {/* Selfie */}
                 <div className="space-y-2">
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
-                    Upload Your Selfie <span className="text-[oklch(0.45,0.04,290)]">(coming soon)</span>
+                    Your Selfie <span className="text-red-400">*</span>
                   </Label>
-                  <div className="border-2 border-dashed border-[oklch(0.30,0.06,290)] rounded-xl p-6 flex flex-col items-center gap-2 bg-[oklch(0.20,0.04,290)] opacity-50">
-                    <Upload className="w-8 h-8 text-[oklch(0.45,0.04,290)]" />
-                    <p className="text-xs text-[oklch(0.55,0.04,290)]">Click to upload or drag & drop</p>
-                    <p className="text-[10px] text-[oklch(0.40,0.04,290)]">PNG, JPG up to 5MB</p>
-                  </div>
+                  {selfiePreview ? (
+                    <div className="relative rounded-xl overflow-hidden border border-[oklch(0.30,0.06,290)]">
+                      <img src={selfiePreview} alt="Selfie" className="w-full h-48 object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => removeImage('selfie')}
+                        className="absolute top-2 right-2 w-7 h-7 rounded-full bg-red-500/80 text-white flex items-center justify-center hover:bg-red-600 transition-colors"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                      <div className="absolute bottom-2 left-2 px-2 py-0.5 rounded bg-green-500/80 text-[10px] text-white font-medium">
+                        {(selfie!.size / 1024).toFixed(0)}KB
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleImageSelect('selfie')}
+                      disabled={uploadingImage === 'selfie'}
+                      className="w-full border-2 border-dashed border-[oklch(0.30,0.06,290)] hover:border-violet-500/40 rounded-xl p-6 flex flex-col items-center gap-2 bg-[oklch(0.20,0.04,290)] transition-all"
+                    >
+                      {uploadingImage === 'selfie' ? (
+                        <Loader2 className="w-8 h-8 text-violet-400 animate-spin" />
+                      ) : (
+                        <Upload className="w-8 h-8 text-[oklch(0.45,0.04,290)]" />
+                      )}
+                      <p className="text-xs text-[oklch(0.55,0.04,290)]">Tap to upload your Selfie</p>
+                      <p className="text-[10px] text-[oklch(0.40,0.04,290)]">PNG, JPG, WEBP — Max 1.5MB</p>
+                    </button>
+                  )}
                 </div>
               </div>
             )}
