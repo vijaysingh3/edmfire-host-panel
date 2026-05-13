@@ -20,8 +20,12 @@ import {
   ChevronRight,
   Upload,
   Send,
+  Loader2,
+  CheckCircle2,
 } from 'lucide-react';
 import Image from 'next/image';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 
 const TOTAL_STEPS = 7;
 
@@ -35,15 +39,74 @@ const stepLabels = [
   { icon: '✅', label: 'Agreement' },
 ];
 
+interface FormData {
+  fullName: string;
+  gender: string;
+  age: string;
+  mobile: string;
+  whatsapp: string;
+  gmail: string;
+  state: string;
+  district: string;
+  city: string;
+  ffNickname: string;
+  playingYears: string;
+  hostedBefore: string;
+  hostingExperience: string;
+  gameModes: string;
+  currentRank: string;
+  devices: string[];
+  primaryDevice: string;
+  ramSize: string;
+  internetQuality: string;
+  canScreenRecord: string;
+  discordTelegram: string;
+  whyJoin: string;
+}
+
+const initialFormData: FormData = {
+  fullName: '',
+  gender: '',
+  age: '',
+  mobile: '',
+  whatsapp: '',
+  gmail: '',
+  state: '',
+  district: '',
+  city: '',
+  ffNickname: '',
+  playingYears: '',
+  hostedBefore: '',
+  hostingExperience: '',
+  gameModes: '',
+  currentRank: '',
+  devices: [],
+  primaryDevice: '',
+  ramSize: '',
+  internetQuality: '',
+  canScreenRecord: '',
+  discordTelegram: '',
+  whyJoin: '',
+};
+
 export default function ApplyPage() {
   const [step, setStep] = useState(1);
   const [agreements, setAgreements] = useState([false, false, false]);
-  const [devices, setDevices] = useState<string[]>([]);
+  const [formData, setFormData] = useState<FormData>(initialFormData);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSubmitted, setIsSubmitted] = useState(false);
+
+  const updateField = (field: keyof FormData, value: string | string[]) => {
+    setFormData((prev) => ({ ...prev, [field]: value }));
+  };
 
   const toggleDevice = (device: string) => {
-    setDevices((prev) =>
-      prev.includes(device) ? prev.filter((d) => d !== device) : [...prev, device]
-    );
+    setFormData((prev) => {
+      const devices = prev.devices.includes(device)
+        ? prev.devices.filter((d) => d !== device)
+        : [...prev.devices, device];
+      return { ...prev, devices };
+    });
   };
 
   const toggleAgreement = (index: number) => {
@@ -62,17 +125,143 @@ export default function ApplyPage() {
     if (step > 1) setStep(step - 1);
   };
 
-  const handleSubmit = () => {
+  const validateCurrentStep = (): boolean => {
+    switch (step) {
+      case 1:
+        if (!formData.fullName.trim()) { toast.error('Please enter your Full Name'); return false; }
+        if (!formData.gender) { toast.error('Please select Gender'); return false; }
+        if (!formData.age || isNaN(Number(formData.age)) || Number(formData.age) < 10) { toast.error('Please enter a valid Age'); return false; }
+        if (!formData.mobile.trim() || formData.mobile.length < 10) { toast.error('Please enter a valid Mobile Number'); return false; }
+        if (!formData.whatsapp.trim() || formData.whatsapp.length < 10) { toast.error('Please enter a valid WhatsApp Number'); return false; }
+        if (!formData.gmail.trim() || !formData.gmail.includes('@')) { toast.error('Please enter a valid Gmail Address'); return false; }
+        return true;
+      case 2:
+        if (!formData.state.trim()) { toast.error('Please enter your State'); return false; }
+        if (!formData.district.trim()) { toast.error('Please enter your District'); return false; }
+        if (!formData.city.trim()) { toast.error('Please enter your City/Town'); return false; }
+        return true;
+      case 3:
+        if (!formData.playingYears) { toast.error('Please select playing experience'); return false; }
+        if (!formData.hostedBefore) { toast.error('Please select hosting experience'); return false; }
+        if (formData.hostedBefore === 'yes' && !formData.hostingExperience.trim()) {
+          toast.error('Please describe your hosting experience');
+          return false;
+        }
+        if (!formData.gameModes) { toast.error('Please select a game mode'); return false; }
+        if (!formData.currentRank) { toast.error('Please select your current rank'); return false; }
+        return true;
+      case 4:
+        if (formData.devices.length === 0) { toast.error('Please select at least one device'); return false; }
+        if (!formData.primaryDevice.trim()) { toast.error('Please enter your Primary Device Name'); return false; }
+        if (!formData.ramSize) { toast.error('Please select RAM size'); return false; }
+        if (!formData.internetQuality) { toast.error('Please select internet quality'); return false; }
+        if (!formData.canScreenRecord) { toast.error('Please select screen record option'); return false; }
+        return true;
+      case 6:
+        if (!formData.whyJoin.trim()) { toast.error('Please write why you want to become a host'); return false; }
+        return true;
+      default:
+        return true;
+    }
+  };
+
+  const handleNext = () => {
+    if (validateCurrentStep()) {
+      nextStep();
+    }
+  };
+
+  const handleSubmit = async () => {
     if (!agreements.every(Boolean)) {
       toast.error('Please accept all agreements');
       return;
     }
-    toast.success('Application Submitted!', {
-      description: 'EDMFire team will review your application soon.',
-    });
+
+    setIsSubmitting(true);
+
+    try {
+      const docRef = await addDoc(collection(db, 'applications'), {
+        fullName: formData.fullName.trim(),
+        gender: formData.gender,
+        age: Number(formData.age),
+        mobile: formData.mobile.trim(),
+        whatsapp: formData.whatsapp.trim(),
+        gmail: formData.gmail.trim().toLowerCase(),
+        state: formData.state.trim(),
+        district: formData.district.trim(),
+        city: formData.city.trim(),
+        ffNickname: formData.ffNickname.trim(),
+        playingYears: formData.playingYears,
+        hostedBefore: formData.hostedBefore,
+        hostingExperience: formData.hostingExperience.trim(),
+        gameModes: formData.gameModes,
+        currentRank: formData.currentRank,
+        devices: formData.devices,
+        primaryDevice: formData.primaryDevice.trim(),
+        ramSize: formData.ramSize,
+        internetQuality: formData.internetQuality,
+        canScreenRecord: formData.canScreenRecord,
+        discordTelegram: formData.discordTelegram.trim(),
+        whyJoin: formData.whyJoin.trim(),
+        status: 'pending',
+        createdAt: serverTimestamp(),
+      });
+
+      console.log('Application submitted with ID:', docRef.id);
+
+      setIsSubmitted(true);
+      toast.success('Application Submitted Successfully!', {
+        description: 'EDMFire team will review your application soon.',
+      });
+    } catch (error: any) {
+      console.error('Error submitting application:', error);
+      toast.error('Submission Failed', {
+        description: error?.message || 'Something went wrong. Please try again.',
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const progressPercent = (step / TOTAL_STEPS) * 100;
+
+  const inputClass = "bg-[oklch(0.22,0.04,290)] border-[oklch(0.30,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)]";
+
+  // Success screen
+  if (isSubmitted) {
+    return (
+      <div className="min-h-screen bg-[oklch(0.12,0.02,290)] flex items-center justify-center px-4">
+        <div className="max-w-md w-full text-center space-y-6">
+          <div className="w-20 h-20 mx-auto rounded-full bg-green-500/10 border border-green-500/30 flex items-center justify-center">
+            <CheckCircle2 className="w-10 h-10 text-green-400" />
+          </div>
+          <div className="space-y-2">
+            <h1 className="text-2xl font-extrabold text-white">Application Submitted!</h1>
+            <p className="text-sm text-[oklch(0.60,0.04,290)]">
+              Thank you, <span className="text-violet-300 font-semibold">{formData.fullName}</span>! Your host application has been received.
+            </p>
+            <p className="text-xs text-[oklch(0.50,0.04,290)]">
+              EDMFire team will review your application and contact you on WhatsApp within 24-48 hours.
+            </p>
+          </div>
+          <div className="flex gap-3">
+            <a
+              href="/login"
+              className="flex-1 h-12 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-700 hover:from-violet-700 hover:to-indigo-800 text-white font-semibold shadow-lg shadow-violet-500/20 flex items-center justify-center"
+            >
+              Go to Login
+            </a>
+            <button
+              onClick={() => { setIsSubmitted(false); setFormData(initialFormData); setStep(1); setAgreements([false, false, false]); }}
+              className="flex-1 h-12 rounded-xl bg-[oklch(0.22,0.04,290)] border border-[oklch(0.30,0.06,290)] text-[oklch(0.70,0.04,290)] font-medium"
+            >
+              New Application
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[oklch(0.12,0.02,290)]">
@@ -142,16 +331,14 @@ export default function ApplyPage() {
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     Full Name <span className="text-red-400">*</span>
                   </Label>
-                  <Input placeholder="Enter your full name" className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.30,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)]" />
+                  <Input value={formData.fullName} onChange={(e) => updateField('fullName', e.target.value)} placeholder="Enter your full name" className={inputClass} />
                 </div>
                 <div className="space-y-2">
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     Gender <span className="text-red-400">*</span>
                   </Label>
-                  <Select>
-                    <SelectTrigger className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.30,0.06,290)] text-white">
-                      <SelectValue placeholder="Select gender" />
-                    </SelectTrigger>
+                  <Select value={formData.gender} onValueChange={(v) => updateField('gender', v)}>
+                    <SelectTrigger className={inputClass}><SelectValue placeholder="Select gender" /></SelectTrigger>
                     <SelectContent className="bg-[oklch(0.20,0.04,290)] border-[oklch(0.30,0.06,290)]">
                       <SelectItem value="male">Male</SelectItem>
                       <SelectItem value="female">Female</SelectItem>
@@ -163,27 +350,27 @@ export default function ApplyPage() {
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     Age <span className="text-red-400">*</span>
                   </Label>
-                  <Input type="number" placeholder="e.g. 20" className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.30,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)]" />
+                  <Input type="number" value={formData.age} onChange={(e) => updateField('age', e.target.value)} placeholder="e.g. 20" className={inputClass} />
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                       Mobile Number <span className="text-red-400">*</span>
                     </Label>
-                    <Input type="tel" placeholder="e.g. 9876543210" className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.30,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)]" />
+                    <Input type="tel" value={formData.mobile} onChange={(e) => updateField('mobile', e.target.value)} placeholder="e.g. 9876543210" className={inputClass} />
                   </div>
                   <div className="space-y-2">
                     <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                       WhatsApp Number <span className="text-red-400">*</span>
                     </Label>
-                    <Input type="tel" placeholder="e.g. 9876543210" className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.30,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)]" />
+                    <Input type="tel" value={formData.whatsapp} onChange={(e) => updateField('whatsapp', e.target.value)} placeholder="e.g. 9876543210" className={inputClass} />
                   </div>
                 </div>
                 <div className="space-y-2">
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     Gmail Address <span className="text-red-400">*</span>
                   </Label>
-                  <Input type="email" placeholder="e.g. you@gmail.com" className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.30,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)]" />
+                  <Input type="email" value={formData.gmail} onChange={(e) => updateField('gmail', e.target.value)} placeholder="e.g. you@gmail.com" className={inputClass} />
                 </div>
               </div>
             )}
@@ -195,19 +382,19 @@ export default function ApplyPage() {
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     State <span className="text-red-400">*</span>
                   </Label>
-                  <Input placeholder="e.g. Maharashtra" className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.30,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)]" />
+                  <Input value={formData.state} onChange={(e) => updateField('state', e.target.value)} placeholder="e.g. Maharashtra" className={inputClass} />
                 </div>
                 <div className="space-y-2">
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     District <span className="text-red-400">*</span>
                   </Label>
-                  <Input placeholder="e.g. Pune" className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.30,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)]" />
+                  <Input value={formData.district} onChange={(e) => updateField('district', e.target.value)} placeholder="e.g. Pune" className={inputClass} />
                 </div>
                 <div className="space-y-2">
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     Village / Town / City <span className="text-red-400">*</span>
                   </Label>
-                  <Input placeholder="e.g. Shivajinagar" className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.30,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)]" />
+                  <Input value={formData.city} onChange={(e) => updateField('city', e.target.value)} placeholder="e.g. Shivajinagar" className={inputClass} />
                 </div>
               </div>
             )}
@@ -219,16 +406,14 @@ export default function ApplyPage() {
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     Free Fire Nickname <span className="text-[oklch(0.45,0.04,290)]">(optional)</span>
                   </Label>
-                  <Input placeholder="Your in-game name" className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.30,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)]" />
+                  <Input value={formData.ffNickname} onChange={(e) => updateField('ffNickname', e.target.value)} placeholder="Your in-game name" className={inputClass} />
                 </div>
                 <div className="space-y-2">
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     How Many Years Have You Played Free Fire? <span className="text-red-400">*</span>
                   </Label>
-                  <Select>
-                    <SelectTrigger className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.30,0.06,290)] text-white">
-                      <SelectValue placeholder="Select experience" />
-                    </SelectTrigger>
+                  <Select value={formData.playingYears} onValueChange={(v) => updateField('playingYears', v)}>
+                    <SelectTrigger className={inputClass}><SelectValue placeholder="Select experience" /></SelectTrigger>
                     <SelectContent className="bg-[oklch(0.20,0.04,290)] border-[oklch(0.30,0.06,290)]">
                       <SelectItem value="lt1">Less than 1 Year</SelectItem>
                       <SelectItem value="1-2">1–2 Years</SelectItem>
@@ -241,34 +426,28 @@ export default function ApplyPage() {
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     Have You Hosted Tournaments Before? <span className="text-red-400">*</span>
                   </Label>
-                  <Select>
-                    <SelectTrigger className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.30,0.06,290)] text-white">
-                      <SelectValue placeholder="Select" />
-                    </SelectTrigger>
+                  <Select value={formData.hostedBefore} onValueChange={(v) => updateField('hostedBefore', v)}>
+                    <SelectTrigger className={inputClass}><SelectValue placeholder="Select" /></SelectTrigger>
                     <SelectContent className="bg-[oklch(0.20,0.04,290)] border-[oklch(0.30,0.06,290)]">
                       <SelectItem value="yes">Yes</SelectItem>
                       <SelectItem value="no">No</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2">
-                  <Label className="text-xs text-[oklch(0.70,0.04,290)]">
-                    If Yes, Explain Your Experience <span className="text-red-400">*</span>
-                  </Label>
-                  <Textarea
-                    placeholder="Describe your tournament hosting experience..."
-                    rows={4}
-                    className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.30,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)] resize-none"
-                  />
-                </div>
+                {formData.hostedBefore === 'yes' && (
+                  <div className="space-y-2">
+                    <Label className="text-xs text-[oklch(0.70,0.04,290)]">
+                      Explain Your Experience <span className="text-red-400">*</span>
+                    </Label>
+                    <Textarea value={formData.hostingExperience} onChange={(e) => updateField('hostingExperience', e.target.value)} placeholder="Describe your tournament hosting experience..." rows={4} className={`${inputClass} resize-none`} />
+                  </div>
+                )}
                 <div className="space-y-2">
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     Which Modes Can You Manage? <span className="text-red-400">*</span>
                   </Label>
-                  <Select>
-                    <SelectTrigger className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.30,0.06,290)] text-white">
-                      <SelectValue placeholder="Select mode" />
-                    </SelectTrigger>
+                  <Select value={formData.gameModes} onValueChange={(v) => updateField('gameModes', v)}>
+                    <SelectTrigger className={inputClass}><SelectValue placeholder="Select mode" /></SelectTrigger>
                     <SelectContent className="bg-[oklch(0.20,0.04,290)] border-[oklch(0.30,0.06,290)]">
                       <SelectItem value="br">Battle Royale</SelectItem>
                       <SelectItem value="cs">Clash Squad</SelectItem>
@@ -280,10 +459,8 @@ export default function ApplyPage() {
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     Your Current Rank <span className="text-red-400">*</span>
                   </Label>
-                  <Select>
-                    <SelectTrigger className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.30,0.06,290)] text-white">
-                      <SelectValue placeholder="Select rank" />
-                    </SelectTrigger>
+                  <Select value={formData.currentRank} onValueChange={(v) => updateField('currentRank', v)}>
+                    <SelectTrigger className={inputClass}><SelectValue placeholder="Select rank" /></SelectTrigger>
                     <SelectContent className="bg-[oklch(0.20,0.04,290)] border-[oklch(0.30,0.06,290)]">
                       <SelectItem value="bronze">Bronze</SelectItem>
                       <SelectItem value="silver">Silver</SelectItem>
@@ -311,12 +488,12 @@ export default function ApplyPage() {
                         key={device}
                         onClick={() => toggleDevice(device)}
                         className={`px-3 py-2.5 rounded-xl text-xs font-medium transition-all border ${
-                          devices.includes(device)
+                          formData.devices.includes(device)
                             ? 'bg-violet-500/20 text-violet-300 border-violet-500/30'
                             : 'bg-[oklch(0.22,0.04,290)] text-[oklch(0.60,0.04,290)] border-[oklch(0.30,0.06,290)] hover:border-[oklch(0.40,0.06,290)]'
                         }`}
                       >
-                        {devices.includes(device) && '✓ '}{device}
+                        {formData.devices.includes(device) && '✓ '}{device}
                       </button>
                     ))}
                   </div>
@@ -325,17 +502,15 @@ export default function ApplyPage() {
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     Primary Device Name <span className="text-red-400">*</span>
                   </Label>
-                  <Input placeholder="e.g. Vivo T2, HP Laptop, ASUS ROG" className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.30,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)]" />
+                  <Input value={formData.primaryDevice} onChange={(e) => updateField('primaryDevice', e.target.value)} placeholder="e.g. Vivo T2, HP Laptop, ASUS ROG" className={inputClass} />
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                       RAM Size <span className="text-red-400">*</span>
                     </Label>
-                    <Select>
-                      <SelectTrigger className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.30,0.06,290)] text-white">
-                        <SelectValue placeholder="Select RAM" />
-                      </SelectTrigger>
+                    <Select value={formData.ramSize} onValueChange={(v) => updateField('ramSize', v)}>
+                      <SelectTrigger className={inputClass}><SelectValue placeholder="Select RAM" /></SelectTrigger>
                       <SelectContent className="bg-[oklch(0.20,0.04,290)] border-[oklch(0.30,0.06,290)]">
                         <SelectItem value="2">2GB</SelectItem>
                         <SelectItem value="3">3GB</SelectItem>
@@ -350,10 +525,8 @@ export default function ApplyPage() {
                     <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                       Internet Quality <span className="text-red-400">*</span>
                     </Label>
-                    <Select>
-                      <SelectTrigger className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.30,0.06,290)] text-white">
-                        <SelectValue placeholder="Select quality" />
-                      </SelectTrigger>
+                    <Select value={formData.internetQuality} onValueChange={(v) => updateField('internetQuality', v)}>
+                      <SelectTrigger className={inputClass}><SelectValue placeholder="Select quality" /></SelectTrigger>
                       <SelectContent className="bg-[oklch(0.20,0.04,290)] border-[oklch(0.30,0.06,290)]">
                         <SelectItem value="average">Average</SelectItem>
                         <SelectItem value="good">Good</SelectItem>
@@ -367,10 +540,8 @@ export default function ApplyPage() {
                     <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                       Can You Screen Record Matches? <span className="text-red-400">*</span>
                     </Label>
-                    <Select>
-                      <SelectTrigger className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.30,0.06,290)] text-white">
-                        <SelectValue placeholder="Select" />
-                      </SelectTrigger>
+                    <Select value={formData.canScreenRecord} onValueChange={(v) => updateField('canScreenRecord', v)}>
+                      <SelectTrigger className={inputClass}><SelectValue placeholder="Select" /></SelectTrigger>
                       <SelectContent className="bg-[oklch(0.20,0.04,290)] border-[oklch(0.30,0.06,290)]">
                         <SelectItem value="yes">Yes</SelectItem>
                         <SelectItem value="no">No</SelectItem>
@@ -381,7 +552,7 @@ export default function ApplyPage() {
                     <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                       Discord / Telegram Username
                     </Label>
-                    <Input placeholder="e.g. @username" className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.30,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)]" />
+                    <Input value={formData.discordTelegram} onChange={(e) => updateField('discordTelegram', e.target.value)} placeholder="e.g. @username" className={inputClass} />
                   </div>
                 </div>
               </div>
@@ -390,32 +561,29 @@ export default function ApplyPage() {
             {/* STEP 5 — Verification */}
             {step === 5 && (
               <div className="space-y-4">
+                <div className="rounded-xl bg-violet-500/5 border border-violet-500/20 p-4">
+                  <p className="text-xs text-[oklch(0.60,0.04,290)]">
+                    Image upload will be available soon. For now, please skip this step.
+                  </p>
+                </div>
                 <div className="space-y-2">
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
-                    Upload Free Fire Profile Screenshot <span className="text-red-400">*</span>
+                    Upload Free Fire Profile Screenshot <span className="text-[oklch(0.45,0.04,290)]">(coming soon)</span>
                   </Label>
-                  <div className="border-2 border-dashed border-[oklch(0.30,0.06,290)] rounded-xl p-6 flex flex-col items-center gap-2 hover:border-violet-500/40 transition-colors cursor-pointer bg-[oklch(0.20,0.04,290)]">
+                  <div className="border-2 border-dashed border-[oklch(0.30,0.06,290)] rounded-xl p-6 flex flex-col items-center gap-2 bg-[oklch(0.20,0.04,290)] opacity-50">
                     <Upload className="w-8 h-8 text-[oklch(0.45,0.04,290)]" />
-                    <p className="text-xs text-[oklch(0.55,0.04,290)]">
-                      Click to upload or drag & drop
-                    </p>
-                    <p className="text-[10px] text-[oklch(0.40,0.04,290)]">
-                      PNG, JPG up to 5MB
-                    </p>
+                    <p className="text-xs text-[oklch(0.55,0.04,290)]">Click to upload or drag & drop</p>
+                    <p className="text-[10px] text-[oklch(0.40,0.04,290)]">PNG, JPG up to 5MB</p>
                   </div>
                 </div>
                 <div className="space-y-2">
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
-                    Upload Your Selfie <span className="text-red-400">*</span>
+                    Upload Your Selfie <span className="text-[oklch(0.45,0.04,290)]">(coming soon)</span>
                   </Label>
-                  <div className="border-2 border-dashed border-[oklch(0.30,0.06,290)] rounded-xl p-6 flex flex-col items-center gap-2 hover:border-violet-500/40 transition-colors cursor-pointer bg-[oklch(0.20,0.04,290)]">
+                  <div className="border-2 border-dashed border-[oklch(0.30,0.06,290)] rounded-xl p-6 flex flex-col items-center gap-2 bg-[oklch(0.20,0.04,290)] opacity-50">
                     <Upload className="w-8 h-8 text-[oklch(0.45,0.04,290)]" />
-                    <p className="text-xs text-[oklch(0.55,0.04,290)]">
-                      Click to upload or drag & drop
-                    </p>
-                    <p className="text-[10px] text-[oklch(0.40,0.04,290)]">
-                      PNG, JPG up to 5MB
-                    </p>
+                    <p className="text-xs text-[oklch(0.55,0.04,290)]">Click to upload or drag & drop</p>
+                    <p className="text-[10px] text-[oklch(0.40,0.04,290)]">PNG, JPG up to 5MB</p>
                   </div>
                 </div>
               </div>
@@ -428,11 +596,7 @@ export default function ApplyPage() {
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     Why Do You Want To Become Host? <span className="text-red-400">*</span>
                   </Label>
-                  <Textarea
-                    placeholder="Write in detail why you want to become an EDMFire host..."
-                    rows={8}
-                    className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.30,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)] resize-none"
-                  />
+                  <Textarea value={formData.whyJoin} onChange={(e) => updateField('whyJoin', e.target.value)} placeholder="Write in detail why you want to become an EDMFire host..." rows={8} className={`${inputClass} resize-none`} />
                 </div>
               </div>
             )}
@@ -485,31 +649,24 @@ export default function ApplyPage() {
         {/* navigation buttons */}
         <div className="flex gap-3">
           {step > 1 && (
-            <Button
-              onClick={prevStep}
-              variant="secondary"
-              className="flex-1 h-12 rounded-xl bg-[oklch(0.22,0.04,290)] border border-[oklch(0.30,0.06,290)] text-[oklch(0.70,0.04,290)]"
-            >
+            <Button onClick={prevStep} variant="secondary" className="flex-1 h-12 rounded-xl bg-[oklch(0.22,0.04,290)] border border-[oklch(0.30,0.06,290)] text-[oklch(0.70,0.04,290)]">
               <ChevronLeft className="w-4 h-4 mr-2" />
               Back
             </Button>
           )}
           {step < TOTAL_STEPS && (
-            <Button
-              onClick={nextStep}
-              className="flex-1 h-12 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-700 hover:from-violet-700 hover:to-indigo-800 text-white font-semibold shadow-lg shadow-violet-500/20"
-            >
+            <Button onClick={handleNext} className="flex-1 h-12 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-700 hover:from-violet-700 hover:to-indigo-800 text-white font-semibold shadow-lg shadow-violet-500/20">
               Next
               <ChevronRight className="w-4 h-4 ml-2" />
             </Button>
           )}
           {step === TOTAL_STEPS && (
-            <Button
-              onClick={handleSubmit}
-              className="flex-1 h-12 rounded-xl bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-semibold shadow-lg shadow-green-500/20"
-            >
-              <Send className="w-4 h-4 mr-2" />
-              Submit Application
+            <Button onClick={handleSubmit} disabled={isSubmitting} className="flex-1 h-12 rounded-xl bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-semibold shadow-lg shadow-green-500/20 disabled:opacity-50 disabled:cursor-not-allowed">
+              {isSubmitting ? (
+                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Submitting...</>
+              ) : (
+                <><Send className="w-4 h-4 mr-2" />Submit Application</>
+              )}
             </Button>
           )}
         </div>
