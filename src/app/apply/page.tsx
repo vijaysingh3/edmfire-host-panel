@@ -28,8 +28,7 @@ import {
 } from 'lucide-react';
 import Image from 'next/image';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { db, storage } from '@/lib/firebase';
+import { db } from '@/lib/firebase';
 
 const MAX_IMAGE_SIZE = 1.5 * 1024 * 1024; // 1.5MB
 
@@ -268,6 +267,49 @@ export default function ApplyPage() {
     else { setSelfie(null); setSelfiePreview(null); }
   };
 
+  // Convert File to base64 string
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
+  // Upload images via Cloud Function
+  const uploadImagesViaFunction = async (files: { file: File; label: string }[]): Promise<{ label: string; url: string }[]> => {
+    const uploadUrl = process.env.NEXT_PUBLIC_IMAGE_UPLOAD_URL;
+    if (!uploadUrl) throw new Error('Image upload service not configured');
+
+    const images = [];
+    for (const item of files) {
+      const base64 = await fileToBase64(item.file);
+      images.push({ base64 });
+    }
+
+    console.log('📸 [Upload] Sending', images.length, 'image(s) to Cloud Function...');
+    const response = await fetch(uploadUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folder: 'hostRequests', images }),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Upload failed (${response.status}): ${errText}`);
+    }
+
+    const result = await response.json();
+    console.log('📸 [Upload] Response:', JSON.stringify(result));
+
+    if (!result.success || result.successful === 0) {
+      throw new Error('Image upload failed. Please try again.');
+    }
+
+    return result.uploaded.map((u: any, i: number) => ({ label: files[i].label, url: u.url }));
+  };
+
   const handleSubmit = async () => {
     if (!agreements.every(Boolean)) {
       toast.error('Please accept all agreements');
@@ -275,33 +317,25 @@ export default function ApplyPage() {
     }
 
     setIsSubmitting(true);
-    console.log('🔥 [Submit] Started — uploading images first...');
+    console.log('🔥 [Submit] Started — uploading images via Cloud Function...');
 
     try {
-      // Upload images to Firebase Storage
+      // Upload images via Cloud Function
       let ffScreenshotUrl = '';
       let selfieUrl = '';
-      const mobile = formData.mobile.trim();
-      const ts = Date.now();
 
-      // Upload FF Screenshot
-      if (ffScreenshot) {
-        setUploadingImage('screenshot');
-        const fileExt = ffScreenshot.name.split('.').pop() || 'jpg';
-        const storageRef = ref(storage, `hostRequests/${mobile}_${ts}_screenshot.${fileExt}`);
-        await uploadBytes(storageRef, ffScreenshot);
-        ffScreenshotUrl = await getDownloadURL(storageRef);
+      const filesToUpload: { file: File; label: string }[] = [];
+      if (ffScreenshot) filesToUpload.push({ file: ffScreenshot, label: 'screenshot' });
+      if (selfie) filesToUpload.push({ file: selfie, label: 'selfie' });
+
+      if (filesToUpload.length > 0) {
+        setUploadingImage('uploading');
+        const uploaded = await uploadImagesViaFunction(filesToUpload);
+        for (const item of uploaded) {
+          if (item.label === 'screenshot') ffScreenshotUrl = item.url;
+          if (item.label === 'selfie') selfieUrl = item.url;
+        }
         console.log('📸 [Upload] Screenshot URL:', ffScreenshotUrl);
-        setUploadingImage(null);
-      }
-
-      // Upload Selfie
-      if (selfie) {
-        setUploadingImage('selfie');
-        const fileExt = selfie.name.split('.').pop() || 'jpg';
-        const storageRef = ref(storage, `hostRequests/${mobile}_${ts}_selfie.${fileExt}`);
-        await uploadBytes(storageRef, selfie);
-        selfieUrl = await getDownloadURL(storageRef);
         console.log('📸 [Upload] Selfie URL:', selfieUrl);
         setUploadingImage(null);
       }
@@ -312,7 +346,7 @@ export default function ApplyPage() {
         fullName: formData.fullName.trim(),
         gender: formData.gender,
         age: Number(formData.age),
-        mobile,
+        mobile: formData.mobile.trim(),
         whatsapp: formData.whatsapp.trim(),
         gmail: formData.gmail.trim().toLowerCase(),
         state: formData.state.trim(),
