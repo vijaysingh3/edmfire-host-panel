@@ -41,4 +41,5 @@ export const RC_KEYS = {
   UNIVERSAL_IMAGE_UPLOADER_URL: 'UNIVERSAL_IMAGE_UPLOADER_URL',
   RTDB_URL: 'FirebaseDatabase_url',         // Firebase RTDB base URL (Kotlin: getDatabaseUrl())
   RTDB_SECRET: 'RECYCLABLE_DB_SECRET',       // Firebase RTDB database secret (Kotlin: getDatabaseSecret())
+  NOTIFY_JOINED_PLAYERS: 'notifyjoinedplayers', // FCM notification Cloud Function URL
 } as const;

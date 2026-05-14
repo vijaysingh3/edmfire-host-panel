@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -12,6 +12,10 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { toast } from 'sonner';
+import { useAuth } from '@/context/AuthContext';
+import { fetchRemoteConfig, getRemoteString, RC_KEYS } from '@/lib/remoteConfig';
+import { rtdbGet } from '@/lib/rtdb';
+import { auth } from '@/lib/firebase';
 import {
   Bell,
   RefreshCw,
@@ -20,78 +24,310 @@ import {
   Trash2,
 } from 'lucide-react';
 
-const demoLogs = [
-  '[09:00:01] Initializing notification service...',
-  '[09:00:02] Service ready. Connected to FCM.',
-  '[09:00:03] Tournament loaded: BattleRoyal — EDM_279',
-  '[09:00:03] Total joined players: 48',
-  '[09:00:04] Composing notification...',
-  '[09:00:04] Title: Room Id or Pass. Released.',
-  '[09:00:04] Body: You have only 5 minutes time.',
-  '[09:00:05] Send Via: FCM (Firebase Cloud Messaging)',
-  '[09:00:06] Sending to: ShadowKiller (UID: 987654321)... SUCCESS',
-  '[09:00:07] Sending to: ProSniper_X (UID: 123456789)... SUCCESS',
-  '[09:00:08] Sending to: DarkPhoenix99 (UID: 456789123)... SUCCESS',
-  '[09:00:09] Sending to: NightWolf (UID: 789123456)... SUCCESS',
-  '[09:00:10] Sending to: AceGamer_01 (UID: 321654987)... SUCCESS',
-  '[09:00:11] Sending to: BlazeMaster (UID: 654987321)... FAILED — Device offline',
-  '[09:00:12] Sending to: ViperShot (UID: 159357258)... SUCCESS',
-  '[09:00:13] Sending to: IronFist777 (UID: 951753456)... SUCCESS',
-  '[09:00:15] Batch 1 complete: 7/8 sent successfully.',
-  '[09:00:16] Retrying failed: BlazeMaster... SUCCESS (retry)',
-  '[09:00:18] ═══════════════════════════════════',
-  '[09:00:18] All notifications sent: 8/8',
-  '[09:00:18] Total time: 14 seconds',
-  '[09:00:19] Notification broadcast completed successfully!',
+// ═══════════════════════════════════════════════════
+// CONSTANTS — Kotlin tournamentTypes array equivalent
+// ═══════════════════════════════════════════════════
+const TOURNAMENT_TYPES = [
+  { value: 'BattleRoyal', label: 'BattleRoyal' },
+  { value: 'ClashSquad', label: 'ClashSquad' },
+  { value: 'FreeTournaments', label: 'FreeTournaments' },
+  { value: 'LoneWolf', label: 'LoneWolf' },
 ];
 
-export default function SendNotificationPage() {
-  const [tournamentType, setTournamentType] = useState('');
-  const [tournamentId, setTournamentId] = useState('EDM_');
-  const [sendVia, setSendVia] = useState('');
-  const [notifTitle, setNotifTitle] = useState('Room Id or Pass. Released.');
-  const [notifBody, setNotifBody] = useState('You have only 5 minutes time.');
-  const [sending, setSending] = useState(false);
-  const [logs, setLogs] = useState<string[]>(demoLogs);
-  const [logVisible, setLogVisible] = useState(true);
+const TOURNAMENT_ID_PREFIX = 'EDM_';
 
+// ═══════════════════════════════════════════════════
+// LOG TYPES — Kotlin LogType enum equivalent
+// ═══════════════════════════════════════════════════
+type LogType = 'INFO' | 'SUCCESS' | 'WARNING' | 'ERROR';
+
+interface LogEntry {
+  message: string;
+  type: LogType;
+  time: string;
+}
+
+// Current time formatter — Kotlin getCurrentTime()
+function getCurrentTime(): string {
+  return new Date().toLocaleTimeString('en-IN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+}
+
+export default function SendNotificationPage() {
+  const { user, isLoading: authLoading } = useAuth();
+  const logEndRef = useRef<HTMLDivElement>(null);
+
+  // ── State ──
+  const [tournamentType, setTournamentType] = useState('');
+  const [tournamentId, setTournamentId] = useState(TOURNAMENT_ID_PREFIX);
+  const [notifTitle, setNotifTitle] = useState('');
+  const [notifBody, setNotifBody] = useState('');
+  const [sending, setSending] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // ── Log state — Kotlin tvResponse/appendToLog equivalent ──
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+
+  // ── Tournament cache — Kotlin TournamentCache (30 sec) ──
+  const [cachedTitle, setCachedTitle] = useState('');
+  const [cachedPlayerCount, setCachedPlayerCount] = useState(0);
+  const [lastFetchTime, setLastFetchTime] = useState(0);
+  const CACHE_DURATION = 30000;
+
+  // ── Init: Remote Config — Kotlin setupRemoteConfig() ──
+  useEffect(() => {
+    if (authLoading) return;
+    const init = async () => {
+      appendLog('Fetching Remote Config...', 'INFO');
+      await fetchRemoteConfig();
+
+      const rtdbUrl = getRemoteString(RC_KEYS.RTDB_URL);
+      const rtdbSecret = getRemoteString(RC_KEYS.RTDB_SECRET);
+      const notifyUrl = getRemoteString(RC_KEYS.NOTIFY_JOINED_PLAYERS);
+
+      appendLog('Remote Config fetched', 'SUCCESS');
+      appendLog(`Database URL: ${rtdbUrl ? 'Received' : 'EMPTY'}`, rtdbUrl ? 'INFO' : 'WARNING');
+      appendLog(`DB Secret: ${rtdbSecret ? 'Received' : 'EMPTY'}`, rtdbSecret ? 'INFO' : 'WARNING');
+      appendLog(`Function URL: ${notifyUrl ? 'Received' : 'EMPTY'}`, notifyUrl ? 'INFO' : 'WARNING');
+
+      if (!rtdbUrl || !rtdbSecret) {
+        appendLog('Warning: RTDB config missing — tournament info won\'t load', 'WARNING');
+      }
+      if (!notifyUrl) {
+        appendLog('Warning: Function URL missing — notifications won\'t send', 'WARNING');
+      }
+    };
+    init();
+  }, [user, authLoading]);
+
+  // Auto-scroll log to bottom — Kotlin fullScroll(FOCUS_DOWN)
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [logs]);
+
+  // ── Append to log — Kotlin appendToLog() with colored SpannableString ──
+  const appendLog = (message: string, type: LogType = 'INFO') => {
+    setLogs((prev) => [...prev, { message, type, time: getCurrentTime() }]);
+  };
+
+  // ── Clear log — Kotlin btnClearLog ──
   const handleClearLog = () => {
     setLogs([]);
-    setLogVisible(false);
-    toast.success('Log Cleared!');
+    appendLog('Log cleared', 'INFO');
   };
 
-  const handleRefresh = () => {
-    setLogs([]);
-    setLogVisible(false);
-    toast.success('Data Refreshed!');
+  // ── Tournament ID field — only EDM_ + digits allowed (Kotlin TextWatcher) ──
+  const handleTournamentIdChange = (value: string) => {
+    if (!value.startsWith(TOURNAMENT_ID_PREFIX)) {
+      const fixed = value === '' ? TOURNAMENT_ID_PREFIX : `${TOURNAMENT_ID_PREFIX}${value.replace(/[^0-9]/g, '')}`;
+      setTournamentId(fixed);
+      return;
+    }
+    // Allow only digits after prefix
+    const afterPrefix = value.slice(TOURNAMENT_ID_PREFIX.length);
+    const digitsOnly = afterPrefix.replace(/[^0-9]/g, '');
+    setTournamentId(`${TOURNAMENT_ID_PREFIX}${digitsOnly}`);
   };
 
-  const handleSend = () => {
-    if (!tournamentType || !tournamentId || !sendVia) {
-      toast.error('Tournament Type, ID aur Send Via sab chahiye');
+  // ── Clear cache when type/id changes — Kotlin clearCache() ──
+  const clearCache = () => {
+    setLastFetchTime(0);
+  };
+
+  const handleTypeChange = (value: string) => {
+    setTournamentType(value);
+    appendLog(`Selected: ${value}`, 'INFO');
+    clearCache();
+  };
+
+  // ═══════════════════════════════════════════════
+  // REFRESH — Kotlin refreshTournamentData()
+  // Reads RTDB: Tournaments/TournamentDetails/{type}/{id}
+  // ═══════════════════════════════════════════════
+  const handleRefresh = async () => {
+    const id = tournamentId.trim();
+    if (!id || id === TOURNAMENT_ID_PREFIX) {
+      appendLog('Tournament ID required', 'ERROR');
+      return;
+    }
+    if (!tournamentType) {
+      appendLog('Tournament Type required', 'ERROR');
+      return;
+    }
+
+    const rtdbUrl = getRemoteString(RC_KEYS.RTDB_URL);
+    const rtdbSecret = getRemoteString(RC_KEYS.RTDB_SECRET);
+    if (!rtdbUrl || !rtdbSecret) {
+      appendLog('RTDB config missing — fetch Remote Config first', 'ERROR');
+      return;
+    }
+
+    // Cache check — Kotlin: 30 sec duplicate read mat karo
+    const now = Date.now();
+    if (lastFetchTime && now - lastFetchTime < CACHE_DURATION) {
+      appendLog(`Title: ${cachedTitle}`, 'SUCCESS');
+      appendLog(`Players joined: ${cachedPlayerCount}`, 'SUCCESS');
+      return;
+    }
+
+    setRefreshing(true);
+    appendLog(`Checking: ${tournamentType}/${id}`, 'INFO');
+
+    try {
+      // Kotlin path: Tournaments/TournamentDetails/{type}/{id}
+      const data = await rtdbGet(`Tournaments/TournamentDetails/${tournamentType}/${id}`);
+
+      if (!data || data === null) {
+        appendLog('Tournament not found', 'ERROR');
+        setRefreshing(false);
+        return;
+      }
+
+      const title = data.Title || 'N/A';
+      const playerCount = data.JoinedPlayersCount || 0;
+
+      setCachedTitle(title);
+      setCachedPlayerCount(playerCount);
+      setLastFetchTime(Date.now());
+
+      appendLog(`Title: ${title}`, 'SUCCESS');
+      appendLog(`Players joined: ${playerCount}`, 'SUCCESS');
+
+    } catch (e: any) {
+      appendLog(`DB Error: ${e.message}`, 'ERROR');
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  // ═══════════════════════════════════════════════
+  // SEND — Kotlin sendNotifications() + callFirebaseFunction()
+  // POST to Firebase Cloud Function with Bearer token
+  // ═══════════════════════════════════════════════
+  const handleSend = async () => {
+    const id = tournamentId.trim();
+    if (!id || id === TOURNAMENT_ID_PREFIX) {
+      appendLog('Tournament ID required', 'ERROR');
+      return;
+    }
+    if (!tournamentType) {
+      appendLog('Tournament Type required', 'ERROR');
       return;
     }
     if (!notifTitle.trim() || !notifBody.trim()) {
-      toast.error('Notification Title aur Body zaruri hain');
+      appendLog('FCM requires title & body', 'ERROR');
       return;
     }
 
-    setLogVisible(true);
-    setSending(true);
-    setLogs([]);
+    const funUrl = getRemoteString(RC_KEYS.NOTIFY_JOINED_PLAYERS);
+    if (!funUrl) {
+      appendLog('Function URL missing — check Remote Config', 'ERROR');
+      return;
+    }
 
-    let i = 0;
-    const interval = setInterval(() => {
-      if (i < demoLogs.length) {
-        setLogs((prev) => [...prev, demoLogs[i]]);
-        i++;
-      } else {
-        clearInterval(interval);
-        setSending(false);
-        toast.success('All Notifications Sent!');
+    const playerCount = cachedPlayerCount;
+
+    // Confirmation — Kotlin AlertDialog
+    const confirmed = window.confirm(
+      `Send FCM to ${playerCount} players\nTournament: ${id}`
+    );
+    if (!confirmed) {
+      appendLog('Cancelled', 'INFO');
+      return;
+    }
+
+    setSending(true);
+    appendLog('========================================', 'INFO');
+    appendLog('Sending FCM via Firebase Function', 'INFO');
+    appendLog(`Tournament: ${tournamentType}/${id}`, 'INFO');
+
+    try {
+      // Build request body — Kotlin jsonRequest
+      const requestBody = {
+        tournamentType,
+        tournamentId: id,
+        title: notifTitle.trim(),
+        body: notifBody.trim(),
+      };
+
+      // Firebase ID Token — Kotlin: user.getIdToken(false).await()
+      let idToken = '';
+      try {
+        if (user) {
+          const tokenResult = await user.getIdToken();
+          idToken = tokenResult;
+        }
+      } catch (e) {
+        console.warn('ID token fetch failed, sending without auth header');
       }
-    }, 350);
+
+      // Call Firebase Function — Kotlin: callFirebaseFunction()
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (idToken) {
+        headers['Authorization'] = `Bearer ${idToken}`;
+      }
+
+      console.log('📤 [Notify] Calling Firebase Function:', funUrl);
+      const response = await fetch(funUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(requestBody),
+      });
+
+      const responseText = await response.text();
+
+      if (response.ok) {
+        try {
+          const jsonResponse = JSON.parse(responseText);
+          const success = jsonResponse.success === true;
+          const summary = jsonResponse.summary;
+
+          if (success && summary) {
+            const total = summary.totalUsersFound || 0;
+            const sent = summary.successfulNotifications || 0;
+            const failed = summary.failedNotifications || 0;
+
+            appendLog('FCM sent successfully!', 'SUCCESS');
+            appendLog(`Total: ${total} | Sent: ${sent} | Failed: ${failed}`, 'SUCCESS');
+            appendLog('========================================', 'INFO');
+
+            if (sent > 0) {
+              toast.success(`${sent} notifications sent!`);
+            }
+          } else {
+            appendLog(`Failed: ${jsonResponse.error || 'Unknown'}`, 'ERROR');
+          }
+        } catch (e) {
+          // Raw response parse fail — still show it
+          appendLog(`Sent (raw): ${responseText.slice(0, 100)}`, 'SUCCESS');
+          toast.success('Notification request sent');
+        }
+      } else {
+        appendLog(`Request failed: HTTP ${response.status} — ${responseText.slice(0, 100)}`, 'ERROR');
+        toast.error('Send Failed');
+      }
+    } catch (e: any) {
+      appendLog(`Error: ${e.message}`, 'ERROR');
+      toast.error('Send Failed', { description: e.message });
+    } finally {
+      setSending(false);
+    }
+  };
+
+  // ── Log color — Kotlin ForegroundColorSpan equivalent ──
+  const getLogColor = (type: LogType): string => {
+    switch (type) {
+      case 'SUCCESS': return 'text-green-400';
+      case 'WARNING': return 'text-orange-400';
+      case 'ERROR': return 'text-red-400';
+      default: return 'text-[oklch(0.55,0.04,290)]';
+    }
   };
 
   return (
@@ -113,68 +349,57 @@ export default function SendNotificationPage() {
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">
             <Label className="text-[11px] text-[oklch(0.70,0.04,290)] font-semibold">Tournament Type</Label>
-            <Select value={tournamentType} onValueChange={setTournamentType}>
+            <Select value={tournamentType} onValueChange={handleTypeChange}>
               <SelectTrigger className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white h-10 rounded-xl text-sm">
                 <SelectValue placeholder="Select Type" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="battle_royale">BattleRoyal</SelectItem>
-                <SelectItem value="clash_squad">ClashSquad</SelectItem>
-                <SelectItem value="lone_wolf">LoneWolf</SelectItem>
-                <SelectItem value="free_tournaments">FreeTournaments</SelectItem>
+                {TOURNAMENT_TYPES.map((t) => (
+                  <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
           <div className="space-y-1.5">
             <Label className="text-[11px] text-[oklch(0.70,0.04,290)] font-semibold">Tournament ID</Label>
-            <Input value={tournamentId} onChange={(e) => setTournamentId(e.target.value)} placeholder="EDM_"
-              className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)] h-10 rounded-xl text-sm text-center" />
+            <Input
+              value={tournamentId}
+              onChange={(e) => handleTournamentIdChange(e.target.value)}
+              placeholder="EDM_"
+              className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)] h-10 rounded-xl text-sm text-center font-mono"
+            />
           </div>
         </div>
 
-        {/* Send Via */}
-        <div className="space-y-1.5">
-          <Label className="text-[11px] text-[oklch(0.70,0.04,290)] font-semibold">Send Via</Label>
-          <Select value={sendVia} onValueChange={setSendVia}>
-            <SelectTrigger className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white h-10 rounded-xl text-sm">
-              <SelectValue placeholder="Select Method" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="fcm">FCM (Firebase Cloud Messaging)</SelectItem>
-              <SelectItem value="in_app">In-App Notification</SelectItem>
-              <SelectItem value="both">Both FCM + In-App</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        {/* REFRESH + SEND Buttons */}
+        {/* REFRESH + SEND Buttons — Kotlin btnRefreshData + btnStartSending */}
         <div className="grid grid-cols-2 gap-3">
-          <Button onClick={handleRefresh}
-            className="h-11 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 text-white font-bold text-sm shadow-lg shadow-blue-500/20">
-            <RefreshCw className="w-4 h-4 mr-2" /> REFRESH
+          <Button onClick={handleRefresh} disabled={refreshing || sending}
+            className="h-11 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 text-white font-bold text-sm shadow-lg shadow-blue-500/20 disabled:opacity-40">
+            {refreshing ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2" /> :
+              <RefreshCw className="w-4 h-4 mr-2" />} REFRESH
           </Button>
-          <Button onClick={handleSend} disabled={sending}
-            className="h-11 rounded-xl bg-gradient-to-r from-green-500 to-emerald-600 text-white font-bold text-sm shadow-lg shadow-green-500/20">
-            {sending ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2" />Sending...</> :
-              <><Send className="w-4 h-4 mr-2" /> SEND</>}
+          <Button onClick={handleSend} disabled={sending || refreshing}
+            className="h-11 rounded-xl bg-gradient-to-r from-green-500 to-emerald-600 text-white font-bold text-sm shadow-lg shadow-green-500/20 disabled:opacity-40">
+            {sending ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2" /> :
+              <Send className="w-4 h-4 mr-2" />} SEND
           </Button>
         </div>
 
-        {/* Notification Title */}
+        {/* Notification Title — Kotlin etInputTittle */}
         <div className="space-y-1.5">
           <Label className="text-[11px] text-[oklch(0.70,0.04,290)] font-semibold">Notification Title</Label>
           <Input value={notifTitle} onChange={(e) => setNotifTitle(e.target.value)} placeholder="Enter notification title"
             className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)] h-10 rounded-xl text-sm" />
         </div>
 
-        {/* Notification Body */}
+        {/* Notification Body — Kotlin etInputBody */}
         <div className="space-y-1.5">
           <Label className="text-[11px] text-[oklch(0.70,0.04,290)] font-semibold">Notification Body</Label>
           <Input value={notifBody} onChange={(e) => setNotifBody(e.target.value)} placeholder="Enter notification body"
             className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)] h-10 rounded-xl text-sm" />
         </div>
 
-        {/* Log Viewer Header */}
+        {/* Log Viewer Header — Kotlin tvResponse header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Terminal className="w-4 h-4 text-yellow-400" />
@@ -186,7 +411,7 @@ export default function SendNotificationPage() {
           </button>
         </div>
 
-        {/* Log Viewer */}
+        {/* Log Viewer — Kotlin tvResponse + scrollViewResponse */}
         <div className="rounded-2xl bg-[oklch(0.12,0.02,290)] border border-[oklch(0.28,0.05,290)] overflow-hidden">
           <div className="p-3 h-[320px] lg:h-[400px] overflow-y-auto scrollbar-none">
             {logs.length === 0 ? (
@@ -194,22 +419,14 @@ export default function SendNotificationPage() {
             ) : (
               <div className="space-y-0.5">
                 {logs.map((log, i) => (
-                  <p key={i}
-                    className={`text-[11px] font-mono leading-relaxed ${
-                      log.includes('SUCCESS') ? 'text-green-400' :
-                      log.includes('FAILED') ? 'text-red-400' :
-                      log.includes('completed successfully') || log.includes('═') ? 'text-green-400' :
-                      log.includes('Sending to') ? 'text-cyan-400' :
-                      log.includes('Retry') || log.includes('Retrying') ? 'text-yellow-400' :
-                      log.includes('Total') ? 'text-yellow-400' :
-                      'text-[oklch(0.55,0.04,290)]'
-                    }`}>
-                    {log}
+                  <p key={i} className={`text-[11px] font-mono leading-relaxed ${getLogColor(log.type)}`}>
+                    [{log.time}] {log.message}
                   </p>
                 ))}
                 {sending && <span className="inline-block w-1.5 h-3 bg-yellow-400 animate-pulse ml-1" />}
               </div>
             )}
+            <div ref={logEndRef} />
           </div>
         </div>
       </div>
