@@ -1,0 +1,151 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ===================================================
+    // HELPER FUNCTIONS
+    // ===================================================
+
+    // Admin Check
+    function isAdmin() {
+      return request.auth != null && request.auth.uid == "UWSPOJ48pnXHAbizdNIHHaMWsRm2";
+    }
+    
+    // User Owner Check (by UID match)
+    function isUserOwner(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    // User specific fields jo wo update kar sakta hai
+    function getUserUpdatableFields() {
+      return ["unreadNotificationCount", "lastLogin", "fcmToken", "fcmTokenUpdatedAt"];
+    }
+
+    // ===================================================
+    // 1. Users Collection
+    // ===================================================
+    match /Users/{userId} {
+      allow read: if isUserOwner(userId) || isAdmin();
+      allow create, delete: if isAdmin();
+      
+      // User sirf specific fields update kar sakta hai
+      allow update: if isAdmin() || 
+        (isUserOwner(userId) && 
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(getUserUpdatableFields()));
+      
+      match /TransactionHistory/{id} {
+        allow read: if isUserOwner(userId) || isAdmin();
+        allow write, update, create, delete: if isAdmin();
+      }
+      
+      match /JoinedMatches/{id} {
+        allow read: if isUserOwner(userId) || isAdmin();
+        allow write, update, create, delete: if isAdmin();
+      }
+      
+      match /Notifications/{id} {
+        allow read, write, create, update, delete: if isUserOwner(userId) || isAdmin();
+      }
+      
+      match /{sub}/{doc} {
+        allow read: if isUserOwner(userId) || isAdmin();
+        allow write, update, create, delete: if isAdmin();
+      }
+    }
+
+    // ===================================================
+    // 2. Admin-only Collections
+    // ===================================================
+    match /AllUTRs/{doc} {
+      allow read, write, update, create, delete: if isAdmin();
+    }
+    
+    match /WithdrawalRequests/{doc} {
+      allow read, write, update, create, delete: if isAdmin();
+    }
+    
+    match /TotalWithdrawal/{doc} {
+      allow read, write, update, create, delete: if isAdmin();
+    }
+    
+    match /TotalDeposit/{doc} {
+      allow read, write, update, create, delete: if isAdmin();
+    }
+
+    // ===================================================
+    // 3. Public Collections
+    // ===================================================
+    match /AllReferralCodes/{doc} {
+      allow read, write: if request.auth != null;
+    }
+
+    // ===================================================
+    // 4. User Tracking (CLIENT FULL ACCESS - AUTH ONLY)
+    // ===================================================
+    match /attempts_tracking/{userId} {
+      allow read, create, update, delete: if request.auth != null && request.auth.uid == userId;
+      allow read, write, create, update, delete: if isAdmin();
+    }
+
+    match /user_verifications/{userId} {
+      allow read, create, update, delete: if request.auth != null && request.auth.uid == userId;
+      allow read, write, create, update, delete: if isAdmin();
+    }
+
+    // ===================================================
+    // 5. AppVersion Collection (PUBLIC READ)
+    // ===================================================
+    match /AppVersion/oxOggxjiTFhG8MZqNXhd {
+      allow read: if true;
+      allow write, update, delete: if isAdmin();
+    }
+
+    // ===================================================
+    // 6. Host Applications (PUBLIC CREATE - ADMIN READ/WRITE)
+    // ===================================================
+    match /applications/{doc} {
+      allow create: if true;
+      allow read, update, delete: if isAdmin();
+    }
+
+    // ===================================================
+    // 7. Hosts Collection (Host Profile Data — NO password here)
+    //    - Host can READ own doc (profile display)
+    //    - Host can UPDATE own doc (profile edit)
+    //    - Admin has full access
+    //    - Document ID = host's authUid
+    // ===================================================
+    match /hosts/{hostId} {
+      allow read: if isUserOwner(hostId) || isAdmin();
+      allow create: if isAdmin();
+      allow update: if isUserOwner(hostId) || isAdmin();
+      allow delete: if isAdmin();
+
+      // ── myThumbnails subcollection ──
+      // Host apne thumbnails read/create kar sakta hai, admin full access
+      match /myThumbnails/{thumbId} {
+        allow read, create: if isUserOwner(hostId) || isAdmin();
+        allow update, delete: if isAdmin();
+      }
+    }
+
+    // ===================================================
+    // 8. hostCredentials Collection (ADMIN ONLY — stores passwords)
+    //    - Host CANNOT read/write — password is completely hidden
+    //    - Only admin can access via Admin SDK / serverless API
+    //    - Document ID = host's authUid (same as hosts doc ID)
+    // ===================================================
+    match /hostCredentials/{hostId} {
+      allow read, write, create, update, delete: if isAdmin();
+    }
+
+    // ===================================================
+    // 9. Default (Admin-only catch-all)
+    // ===================================================
+    match /{doc=**} {
+      allow read, write, update, create, delete: if isAdmin();
+    }
+    
+  }
+}
