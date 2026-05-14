@@ -2,7 +2,7 @@
 // Kotlin me FirebaseRemoteConfig use hota tha, same logic web me
 
 import { getRemoteConfig, fetchAndActivate, getValue, RemoteConfig } from 'firebase/remote-config';
-import { app } from '@/lib/firebase';
+import app from '@/lib/firebase';
 
 // Remote Config singleton instance
 let remoteConfigInstance: RemoteConfig | null = null;
