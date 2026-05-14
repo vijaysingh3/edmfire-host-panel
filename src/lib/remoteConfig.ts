@@ -36,6 +36,9 @@ export function getRemoteString(key: string): string {
 }
 
 // Pre-defined keys — project me jahan jahan use hoga
+// Agar Remote Config me key ka naam alag hai to yahan update karo
 export const RC_KEYS = {
   UNIVERSAL_IMAGE_UPLOADER_URL: 'UNIVERSAL_IMAGE_UPLOADER_URL',
+  RTDB_URL: 'RTDB_URL',           // Firebase RTDB base URL
+  RTDB_SECRET: 'RTDB_SECRET',     // Firebase RTDB database secret
 } as const;

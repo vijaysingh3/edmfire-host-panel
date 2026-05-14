@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
@@ -13,6 +13,18 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { toast } from 'sonner';
+import { useAuth } from '@/context/AuthContext';
+import { fetchRemoteConfig, RC_KEYS } from '@/lib/remoteConfig';
+import { rtdbGet, rtdbPut, rtdbPatch } from '@/lib/rtdb';
+import {
+  collection,
+  query,
+  orderBy,
+  getDocs,
+  addDoc,
+  Timestamp,
+} from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 import {
   Trophy,
   RefreshCw,
@@ -20,10 +32,100 @@ import {
   ArrowRight,
 } from 'lucide-react';
 
+// ═══════════════════════════════════════════════════
+// CONSTANTS — Spinner options (Kotlin arrays equivalent)
+// ═══════════════════════════════════════════════════
+const TOURNAMENT_TYPES = [
+  { value: 'BattleRoyal', label: 'BattleRoyal' },
+  { value: 'ClashSquad', label: 'ClashSquad' },
+  { value: 'LoneWolf', label: 'LoneWolf' },
+  { value: 'FreeTournaments', label: 'FreeTournaments' },
+];
+
+const GAME_MODES = [
+  { value: 'BattleRoyal', label: 'BattleRoyal' },
+  { value: 'ClashSquad', label: 'ClashSquad' },
+  { value: 'LoneWolf', label: 'LoneWolf' },
+];
+
+const MAPS = [
+  { value: 'Bermuda', label: 'Bermuda' },
+  { value: 'Purgatory', label: 'Purgatory' },
+  { value: 'Kalahari', label: 'Kalahari' },
+  { value: 'Alpine', label: 'Alpine' },
+  { value: 'Nexterra', label: 'Nexterra' },
+];
+
+const TYPES = [
+  { value: 'Solo', label: 'Solo' },
+  { value: 'Duo', label: 'Duo' },
+  { value: 'Squad', label: 'Squad' },
+];
+
+const STATUSES = [
+  { value: 'Upcoming', label: 'Upcoming' },
+  { value: 'Ongoing', label: 'Ongoing' },
+  { value: 'Completed', label: 'Completed' },
+];
+
+// ═══════════════════════════════════════════════════
+// PAISA ↔ RUPEES CONVERSION — "Database Paisa, User Rupees, Decimal Allowed"
+// ═══════════════════════════════════════════════════
+const RUPEE_TO_PAISA = 100;
+
+function rupeesToPaisa(rupees: number): number {
+  return Math.round(rupees * RUPEE_TO_PAISA);
+}
+
+function paisaToRupees(paisa: number): number {
+  return paisa / RUPEE_TO_PAISA;
+}
+
+// Display formatting: 1000 paisa → "10 Coins", 150 paisa → "1.5 Coins"
+function formatCoins(paisa: number): string {
+  const rupees = paisaToRupees(paisa);
+  if (rupees % 1 === 0) {
+    return `${rupees} Coins`;
+  }
+  return `${rupees} Coins`;
+}
+
+// ═══════════════════════════════════════════════════
+// TOURNAMENT ID GENERATOR — Kotlin TournamentIdGenerator equivalent
+// ═══════════════════════════════════════════════════
+function generateNewTournamentId(existingIds: string[]): string {
+  const numbers = existingIds.map((id) => {
+    const num = id.replace('EDM_', '').trim();
+    return parseInt(num, 10);
+  }).filter((n) => !isNaN(n));
+
+  const highest = numbers.length > 0 ? Math.max(...numbers) : 99;
+  return `EDM_${highest + 1}`;
+}
+
+// ═══════════════════════════════════════════════════
+// DATETIME FORMAT — Kotlin me "YYYY/MM/DD HH:MM"
+// datetime-local input se convert karo
+// ═══════════════════════════════════════════════════
+function formatDateTimeForRTDB(dtLocal: string): string {
+  // "2025-05-14T15:30" → "2025/05/14 15:30"
+  if (!dtLocal) return '';
+  const [date, time] = dtLocal.split('T');
+  if (!date) return dtLocal;
+  const [y, m, d] = date.split('-');
+  return `${y}/${m}/${d}${time ? ' ' + time : ''}`;
+}
+
 export default function CreateTournamentPage() {
+  const { user, isLoading: authLoading } = useAuth();
+
+  // ── Mode & Loading ──
   const [mode, setMode] = useState<'create' | 'update'>('create');
   const [loading, setLoading] = useState(false);
+  const [configReady, setConfigReady] = useState(false);
+  const [rtdbReady, setRtdbReady] = useState(false);
 
+  // ── Form Fields ──
   const [tournamentType, setTournamentType] = useState('');
   const [gameMode, setGameMode] = useState('');
   const [title, setTitle] = useState('');
@@ -40,27 +142,418 @@ export default function CreateTournamentPage() {
   const [roomId, setRoomId] = useState('');
   const [roomPassword, setRoomPassword] = useState('');
   const [videoUrl, setVideoUrl] = useState('');
-  const [status, setStatus] = useState('upcoming');
+  const [status, setStatus] = useState('Upcoming');
 
-  const handleSubmit = () => {
-    if (!tournamentType || !title) {
-      toast.error('Tournament Type aur Title zaruri hain');
-      return;
+  // ── Create Mode State ──
+  const [generatedId, setGeneratedId] = useState('');
+
+  // ── Update Mode State ──
+  const [hostTournaments, setHostTournaments] = useState<Record<string, string[]>>({});
+  const [updateType, setUpdateType] = useState('');
+  const [updateId, setUpdateId] = useState('');
+  const [currentTournamentData, setCurrentTournamentData] = useState<Record<string, any> | null>(null);
+
+  // ── Load tournaments list for update mode ──
+  const loadHostTournaments = useCallback(async () => {
+    if (!user) return;
+    try {
+      const q = query(
+        collection(db, 'hosts', user.uid, 'myMatches'),
+        orderBy('__name__', 'desc')
+      );
+      const snap = await getDocs(q);
+      const grouped: Record<string, string[]> = {};
+
+      snap.forEach((doc) => {
+        const d = doc.data();
+        const tType = d.tournamentType || '';
+        const tId = d.tournamentId || '';
+        if (tType && tId) {
+          if (!grouped[tType]) grouped[tType] = [];
+          grouped[tType].push(tId);
+        }
+      });
+
+      setHostTournaments(grouped);
+      return grouped;
+    } catch (e: any) {
+      console.error('❌ [Tournament] Load myMatches error:', e);
+      toast.error('Failed to load tournaments', { description: e.message });
+      return {};
     }
-    setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
-      toast.success(mode === 'create' ? 'Tournament Created!' : 'Tournament Updated!');
-    }, 1200);
+  }, [user]);
+
+  // ── Init: Remote Config ──
+  useEffect(() => {
+    if (authLoading) return;
+    const init = async () => {
+      await fetchRemoteConfig();
+      const rtdbUrl = RC_KEYS.RTDB_URL;
+      // Check if RTDB URL is configured (check via getRemoteString indirectly)
+      setConfigReady(true);
+    };
+    init();
+  }, [user, authLoading]);
+
+  // ── Validate required fields — Kotlin TournamentValidator equivalent ──
+  const validateRequired = (): boolean => {
+    if (!title.trim()) {
+      toast.error('Title is required');
+      return false;
+    }
+    if (!dateTime.trim()) {
+      toast.error('Date & Time is required');
+      return false;
+    }
+    return true;
   };
 
-  const handleLoad = () => {
+  // ── Clear form — Kotlin clearForm() equivalent ──
+  const clearForm = () => {
+    setTitle('');
+    setDescription('');
+    setBannerUrl('');
+    setDateTime('');
+    setSlotNumbers('');
+    setJoiningFee('');
+    setReferralUseAmount('');
+    setPerKill('');
+    setPricePool('');
+    setRoomId('');
+    setRoomPassword('');
+    setVideoUrl('');
+    setMap('');
+    setType('');
+    setStatus('Upcoming');
+    setGameMode('');
+    setTournamentType('');
+    setGeneratedId('');
+  };
+
+  // ═══════════════════════════════════════════════
+  // CREATE MODE — Kotlin generateAndCreateTournament() + saveTournamentData()
+  // ═══════════════════════════════════════════════
+  const handleCreate = async () => {
+    if (!user) {
+      toast.error('Not logged in');
+      return;
+    }
+    if (!validateRequired()) return;
+
     if (!tournamentType) {
-      toast.error('Pehle Tournament Type select karo');
+      toast.error('Tournament Type is required');
       return;
     }
-    toast.success('Tournament Data Loaded!');
+
+    setLoading(true);
+    toast.info('Generating Tournament ID...');
+
+    try {
+      // Step 1: Get all existing IDs from RTDB — Kotlin: getAllTournamentIds()
+      const allIdsData = await rtdbGet('AllTournamentsID');
+      const existingIds = allIdsData ? Object.keys(allIdsData) : [];
+      console.log('🎯 [Tournament] Existing IDs:', existingIds.length);
+
+      // Step 2: Generate new ID — Kotlin: TournamentIdGenerator.generateNewTournamentId()
+      const newId = existingIds.length > 0
+        ? generateNewTournamentId(existingIds)
+        : 'EDM_100';
+      console.log('🎯 [Tournament] Generated ID:', newId);
+      setGeneratedId(newId);
+
+      // Step 3: Register new ID in RTDB — Kotlin: addNewTournamentId()
+      const now = new Date().toLocaleString('en-IN', {
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+      });
+      const idRegistered = await rtdbPut(`AllTournamentsID/${newId}`, {
+        createdAt: now,
+        createdBy: user.uid,
+        tournamentId: newId,
+        isActive: true,
+      });
+
+      if (!idRegistered) {
+        throw new Error('Failed to register tournament ID');
+      }
+
+      // Step 4: Build tournament data — Kotlin: saveTournamentData()
+      const joiningFeePaisa = rupeesToPaisa(parseFloat(joiningFee) || 0);
+      const perKillPaisa = rupeesToPaisa(parseFloat(perKill) || 0);
+      const pricePoolPaisa = rupeesToPaisa(parseFloat(pricePool) || 0);
+
+      console.log('💰 [Tournament] JoiningFee:', joiningFee, '₹ →', joiningFeePaisa, 'paisa');
+      console.log('💰 [Tournament] PerKill:', perKill, '₹ →', perKillPaisa, 'paisa');
+      console.log('💰 [Tournament] PricePool:', pricePool, '₹ →', pricePoolPaisa, 'paisa');
+
+      const formattedDT = formatDateTimeForRTDB(dateTime);
+
+      const tournamentData: Record<string, any> = {
+        Title: title,
+        Description: description,
+        BannerUrl: bannerUrl,
+        DateTime: formattedDT,
+        JoinedPlayersCount: 0,
+        JoiningFee: joiningFeePaisa,         // ✅ Store PAISA
+        ReferralUseAmount: parseInt(referralUseAmount) || 0,
+        Map: map,
+        Mode: gameMode,
+        PerKill: perKillPaisa,              // ✅ Store PAISA
+        PricePool: pricePoolPaisa,          // ✅ Store PAISA
+        RoomID: roomId,
+        RoomPassword: roomPassword,
+        SlotNumbers: parseInt(slotNumbers) || 0,
+        Status: 'Upcoming',
+        Type: type,
+        VideoUrl: videoUrl,
+        HostUID: user.uid,
+        ResultStatus: false,
+        PaymentStatus: false,
+        CreatedAt: now,
+        LastUpdated: now,
+      };
+
+      // Step 5: Save Meta — Kotlin: saveTournamentDataWithMap() Meta path
+      const metaPath = `Tournaments/TournamentMeta/${tournamentType}/${newId}`;
+      const metaData = { ...tournamentData };
+
+      // Step 6: Save Details — BannerUrl nahi, JoinedPlayers empty
+      const detailsPath = `Tournaments/TournamentDetails/${tournamentType}/${newId}`;
+      const detailsData = { ...tournamentData };
+      delete detailsData.BannerUrl;
+      detailsData.JoinedPlayers = {};
+
+      const metaSuccess = await rtdbPut(metaPath, metaData);
+      if (!metaSuccess) throw new Error('Failed to save tournament meta');
+
+      const detailsSuccess = await rtdbPut(detailsPath, detailsData);
+      if (!detailsSuccess) throw new Error('Failed to save tournament details');
+
+      // Step 7: Update TournamentsCount — Kotlin: updateTournamentsCount()
+      try {
+        const countData = await rtdbGet('Tournaments/TournamentsCount');
+        const counts: Record<string, number> = countData || {};
+        counts[tournamentType] = (counts[tournamentType] || 0) + 1;
+        await rtdbPut('Tournaments/TournamentsCount', counts);
+      } catch (e) {
+        console.warn('⚠️ [Tournament] Count update failed, continuing...', e);
+      }
+
+      // Step 8: Save reference to Firestore — hosts/{hostId}/myMatches
+      await addDoc(collection(db, 'hosts', user.uid, 'myMatches'), {
+        tournamentId: newId,
+        tournamentType: tournamentType,
+      });
+
+      console.log('✅ [Tournament] Created:', newId);
+      toast.success(`Tournament Created!`, { description: `ID: ${newId}` });
+      clearForm();
+
+    } catch (e: any) {
+      console.error('❌ [Tournament] Create error:', e);
+      toast.error('Creation Failed', { description: e.message });
+    } finally {
+      setLoading(false);
+    }
   };
+
+  // ═══════════════════════════════════════════════
+  // UPDATE MODE — Kotlin loadTournamentData() + updateTournamentData()
+  // ═══════════════════════════════════════════════
+
+  // Mode switch karne pe tournaments load karo — Kotlin: loadAdminTournaments()
+  const handleModeSwitch = async (newMode: 'create' | 'update') => {
+    setMode(newMode);
+    if (newMode === 'update') {
+      clearForm();
+      setCurrentTournamentData(null);
+      setUpdateType('');
+      setUpdateId('');
+      setLoading(true);
+      const grouped = await loadHostTournaments();
+      setLoading(false);
+
+      if (Object.keys(grouped).length === 0) {
+        toast.error('No tournaments found', { description: 'Create a tournament first' });
+        setMode('create');
+      }
+    } else {
+      clearForm();
+      setCurrentTournamentData(null);
+    }
+  };
+
+  // Type select karne pe IDs load karo — Kotlin: loadTournamentIdsForType()
+  const handleUpdateTypeChange = (value: string) => {
+    setUpdateType(value);
+    setUpdateId('');
+    clearForm();
+    setCurrentTournamentData(null);
+  };
+
+  // Load tournament data from RTDB — Kotlin: loadTournamentData()
+  const handleLoadTournament = async () => {
+    if (!updateType || updateType === '__placeholder__') {
+      toast.error('Select tournament type');
+      return;
+    }
+    if (!updateId || updateId === '__placeholder__') {
+      toast.error('Select tournament ID');
+      return;
+    }
+
+    setLoading(true);
+    toast.info('Loading tournament data...');
+
+    try {
+      const path = `Tournaments/TournamentMeta/${updateType}/${updateId}`;
+      const data = await rtdbGet(path);
+
+      if (!data || data === null) {
+        toast.error('Tournament not found in RTDB');
+        setLoading(false);
+        return;
+      }
+
+      console.log('✅ [Tournament] Loaded:', updateType, updateId);
+      setCurrentTournamentData(data);
+
+      // Populate form — Kotlin: populateForm()
+      setTitle(data.Title || '');
+      setDescription(data.Description || '');
+      setBannerUrl(data.BannerUrl || '');
+
+      // DateTime: RTDB se "YYYY/MM/DD HH:MM" aata hai, datetime-local ke liye convert
+      const dtStr = data.DateTime || '';
+      if (dtStr.includes('/')) {
+        // "2025/05/14 15:30" → "2025-05-14T15:30"
+        const [datePart, timePart] = dtStr.split(' ');
+        const [y, m, d] = datePart.split('/');
+        setDateTime(`${y}-${m}-${d}T${timePart || ''}`);
+      } else {
+        setDateTime('');
+      }
+
+      setSlotNumbers(String(data.SlotNumbers || ''));
+
+      // ✅ PAISA → RUPEES for display
+      const joiningFeePaisa = data.JoiningFee || 0;
+      const perKillPaisa = data.PerKill || 0;
+      const pricePoolPaisa = data.PricePool || 0;
+
+      setJoiningFee(String(paisaToRupees(joiningFeePaisa)));
+      setPerKill(String(paisaToRupees(perKillPaisa)));
+      setPricePool(String(paisaToRupees(pricePoolPaisa)));
+
+      setReferralUseAmount(String(data.ReferralUseAmount || ''));
+      setRoomId(data.RoomID || '');
+      setRoomPassword(data.RoomPassword || '');
+      setVideoUrl(data.VideoUrl || '');
+
+      // Spinners set karo
+      setMap(data.Map || '');
+      setType(data.Type || '');
+      setStatus(data.Status || 'Upcoming');
+      setGameMode(data.Mode || '');
+
+      toast.success('Tournament loaded!', { description: `ID: ${updateId}` });
+
+    } catch (e: any) {
+      console.error('❌ [Tournament] Load error:', e);
+      toast.error('Load Failed', { description: e.message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Update tournament — Kotlin: updateTournamentData()
+  const handleUpdate = async () => {
+    if (!currentTournamentData) {
+      toast.error('Load a tournament first');
+      return;
+    }
+    if (!validateRequired()) return;
+
+    setLoading(true);
+    toast.info('Updating tournament...');
+
+    try {
+      const now = new Date().toLocaleString('en-IN', {
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+      });
+
+      const formattedDT = formatDateTimeForRTDB(dateTime);
+
+      // Build updates — Kotlin: getModifiedFields()
+      const updates: Record<string, any> = { LastUpdated: now };
+
+      if (title.trim()) updates.Title = title;
+      if (description.trim()) updates.Description = description;
+      if (bannerUrl.trim()) updates.BannerUrl = bannerUrl;
+      if (formattedDT) updates.DateTime = formattedDT;
+      if (map) updates.Map = map;
+      if (type) updates.Type = type;
+      if (status) updates.Status = status;
+      if (gameMode) updates.Mode = gameMode;
+
+      const slots = parseInt(slotNumbers);
+      if (slots > 0) updates.SlotNumbers = slots;
+
+      // ✅ RUPEES → PAISA for storage
+      const jf = parseFloat(joiningFee);
+      if (!isNaN(jf) && jf > 0) {
+        updates.JoiningFee = rupeesToPaisa(jf);
+        console.log('💰 JoiningFee:', jf, '₹ →', updates.JoiningFee, 'paisa');
+      }
+
+      const rua = parseInt(referralUseAmount);
+      if (!isNaN(rua)) updates.ReferralUseAmount = rua;
+
+      const pk = parseFloat(perKill);
+      if (!isNaN(pk) && pk > 0) {
+        updates.PerKill = rupeesToPaisa(pk);
+        console.log('💰 PerKill:', pk, '₹ →', updates.PerKill, 'paisa');
+      }
+
+      const pp = parseFloat(pricePool);
+      if (!isNaN(pp) && pp > 0) {
+        updates.PricePool = rupeesToPaisa(pp);
+        console.log('💰 PricePool:', pp, '₹ →', updates.PricePool, 'paisa');
+      }
+
+      if (roomId.trim()) updates.RoomID = roomId;
+      if (roomPassword.trim()) updates.RoomPassword = roomPassword;
+      if (videoUrl.trim()) updates.VideoUrl = videoUrl;
+
+      // Update Meta (BannerUrl included) — Kotlin: updateSpecificTournamentFields()
+      const metaPath = `Tournaments/TournamentMeta/${updateType}/${updateId}`;
+      const metaSuccess = await rtdbPatch(metaPath, updates);
+      if (!metaSuccess) throw new Error('Meta update failed');
+
+      // Update Details (BannerUrl excluded) — same as Kotlin
+      const detailsUpdates = { ...updates };
+      delete detailsUpdates.BannerUrl;
+      const detailsPath = `Tournaments/TournamentDetails/${updateType}/${updateId}`;
+      const detailsSuccess = await rtdbPatch(detailsPath, detailsUpdates);
+      if (!detailsSuccess) throw new Error('Details update failed');
+
+      // Refresh current data
+      const newData = await rtdbGet(metaPath);
+      if (newData) setCurrentTournamentData(newData);
+
+      toast.success('Tournament Updated!', { description: `ID: ${updateId}` });
+
+    } catch (e: any) {
+      console.error('❌ [Tournament] Update error:', e);
+      toast.error('Update Failed', { description: e.message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ── Available IDs for selected update type ──
+  const availableIds = updateType ? (hostTournaments[updateType] || []) : [];
 
   return (
     <div className="min-h-screen">
@@ -71,6 +564,11 @@ export default function CreateTournamentPage() {
             Create / Update Tournament
           </h1>
           <p className="text-white/60 text-sm mt-1">Step 2 — Set up tournament with rooms, rules &amp; prizes</p>
+          {configReady && (
+            <p className="text-white/40 text-[10px] mt-1">
+              {rtdbReady ? '✅ RTDB Connected' : '⚠️ Config loaded'}
+            </p>
+          )}
         </div>
       </header>
 
@@ -80,58 +578,65 @@ export default function CreateTournamentPage() {
         <div className="flex items-center gap-4">
           <Label className="text-sm font-bold text-[oklch(0.85,0.04,290)] whitespace-nowrap">Mode:</Label>
           <div className="flex-1 flex rounded-xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.30,0.06,290)] p-1">
-            <button onClick={() => { setMode('create'); setStatus('upcoming'); }}
+            <button onClick={() => handleModeSwitch('create')}
               className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all ${mode === 'create' ? 'bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-lg shadow-orange-500/20' : 'text-[oklch(0.55,0.04,290)]'}`}>
               Create Mode
             </button>
-            <button onClick={() => { setMode('update'); setStatus(''); }}
+            <button onClick={() => handleModeSwitch('update')}
               className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all ${mode === 'update' ? 'bg-gradient-to-r from-blue-500 to-indigo-600 text-white shadow-lg shadow-blue-500/20' : 'text-[oklch(0.55,0.04,290)]'}`}>
               Update Mode
             </button>
           </div>
         </div>
 
-        {/* Update Mode Section */}
+        {/* Update Mode Section — Kotlin: updateModeLayout */}
         {mode === 'update' && (
           <div className="rounded-2xl bg-[oklch(0.18,0.04,290)] border border-blue-500/20 p-4 space-y-4">
             <p className="text-sm font-bold text-blue-400">Select Tournament to Update:</p>
+
+            {/* Tournament Type Dropdown — Kotlin: spinnerUpdateTournamentType */}
             <div className="space-y-2">
               <Label className="text-xs text-[oklch(0.65,0.04,290)]">Tournament Type</Label>
-              <Select value={tournamentType} onValueChange={setTournamentType}>
+              <Select value={updateType} onValueChange={handleUpdateTypeChange}>
                 <SelectTrigger className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white h-12 rounded-xl">
                   <SelectValue placeholder="Select Type" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="battle_royale">BattleRoyal</SelectItem>
-                  <SelectItem value="clash_squad">ClashSquad</SelectItem>
-                  <SelectItem value="lone_wolf">LoneWolf</SelectItem>
-                  <SelectItem value="free_tournaments">FreeTournaments</SelectItem>
+                  {Object.keys(hostTournaments).length > 0
+                    ? Object.keys(hostTournaments).map((t) => (
+                        <SelectItem key={t} value={t}>{t}</SelectItem>
+                      ))
+                    : <SelectItem value="__placeholder__" disabled>No tournaments</SelectItem>
+                  }
                 </SelectContent>
               </Select>
             </div>
+
+            {/* Tournament ID Dropdown — Kotlin: spinnerUpdateTournamentId */}
             <div className="space-y-2">
               <Label className="text-xs text-[oklch(0.65,0.04,290)]">Tournament ID</Label>
-              <Select>
+              <Select value={updateId} onValueChange={setUpdateId}>
                 <SelectTrigger className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white h-12 rounded-xl">
                   <SelectValue placeholder="Select Tournament ID" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="EDM_279">EDM_279</SelectItem>
-                  <SelectItem value="EDM_280">EDM_280</SelectItem>
-                  <SelectItem value="EDM_281">EDM_281</SelectItem>
+                  {availableIds.length > 0
+                    ? availableIds.map((id) => (
+                        <SelectItem key={id} value={id}>{id}</SelectItem>
+                      ))
+                    : <SelectItem value="__placeholder__" disabled>
+                        {updateType ? 'No IDs for this type' : 'Select type first'}
+                      </SelectItem>
+                  }
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <Label className="text-xs text-[oklch(0.65,0.04,290)]">Or Enter Manually</Label>
-                <span className="text-[10px] text-[oklch(0.40,0.04,290)] bg-[oklch(0.25,0.04,290)] px-2 py-0.5 rounded-full">Optional</span>
-              </div>
-              <Input placeholder="Enter Tournament ID" className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)] h-12 rounded-xl" />
-            </div>
-            <Button onClick={handleLoad}
-              className="w-full h-12 rounded-xl bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-semibold shadow-lg shadow-blue-500/20">
-              <RefreshCw className="w-4 h-4 mr-2" /> Load Tournament Data
+
+            {/* Load Button — Kotlin: btnLoadTournament */}
+            <Button onClick={handleLoadTournament} disabled={loading || !updateId || updateId === '__placeholder__'}
+              className="w-full h-12 rounded-xl bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-semibold shadow-lg shadow-blue-500/20 disabled:opacity-40 disabled:cursor-not-allowed">
+              {loading ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> :
+                <><RefreshCw className="w-4 h-4 mr-2" /> Load Tournament Data</>}
             </Button>
           </div>
         )}
@@ -139,7 +644,7 @@ export default function CreateTournamentPage() {
         {/* Common Form */}
         <div className="rounded-2xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.30,0.06,290)] p-4 lg:p-5 space-y-4">
 
-          {/* Tournament Type (Create only) */}
+          {/* Tournament Type (Create only) — Kotlin: spinnerTournamentType */}
           {mode === 'create' && (
             <div className="space-y-2">
               <Label className="text-xs text-[oklch(0.70,0.04,290)] font-semibold">Tournament Type <span className="text-red-400">*</span></Label>
@@ -148,16 +653,15 @@ export default function CreateTournamentPage() {
                   <SelectValue placeholder="Select Tournament Type" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="battle_royale">BattleRoyal</SelectItem>
-                  <SelectItem value="clash_squad">ClashSquad</SelectItem>
-                  <SelectItem value="lone_wolf">LoneWolf</SelectItem>
-                  <SelectItem value="free_tournaments">FreeTournaments</SelectItem>
+                  {TOURNAMENT_TYPES.map((t) => (
+                    <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
           )}
 
-          {/* Game Mode (Create only) */}
+          {/* Game Mode (Create only) — Kotlin: spinnerMode */}
           {mode === 'create' && (
             <div className="space-y-2">
               <Label className="text-xs text-[oklch(0.70,0.04,290)] font-semibold">Game Mode <span className="text-red-400">*</span></Label>
@@ -166,20 +670,20 @@ export default function CreateTournamentPage() {
                   <SelectValue placeholder="Select Game Mode" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="battle_royale">BattleRoyal</SelectItem>
-                  <SelectItem value="clash_squad">ClashSquad</SelectItem>
-                  <SelectItem value="lone_wolf">LoneWolf</SelectItem>
+                  {GAME_MODES.map((m) => (
+                    <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
           )}
 
-          {/* Tournament ID (auto, Create only) */}
+          {/* Tournament ID (auto-generated, Create only) — Kotlin: etTournamentId */}
           {mode === 'create' && (
             <div className="space-y-2">
               <Label className="text-xs text-[oklch(0.70,0.04,290)] font-semibold">Tournament ID</Label>
               <div className="flex items-center bg-[oklch(0.20,0.04,290)] border border-[oklch(0.30,0.06,290)] rounded-xl px-4 h-12">
-                <span className="text-sm text-[oklch(0.50,0.04,290)]">EDM_282</span>
+                <span className="text-sm text-purple-400 font-mono font-bold">{generatedId || 'EDM_???'}</span>
                 <span className="text-[10px] text-[oklch(0.40,0.04,290)] ml-auto">Auto-generated</span>
               </div>
             </div>
@@ -206,14 +710,15 @@ export default function CreateTournamentPage() {
               className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)] h-12 rounded-xl" />
           </div>
 
-          {/* Date & Time */}
+          {/* Date & Time — Kotlin: etDateTime (format YYYY/MM/DD HH:MM) */}
           <div className="space-y-2">
-            <Label className="text-xs text-[oklch(0.70,0.04,290)] font-semibold">Date &amp; Time</Label>
+            <Label className="text-xs text-[oklch(0.70,0.04,290)] font-semibold">Date &amp; Time <span className="text-red-400">*</span></Label>
             <Input type="datetime-local" value={dateTime} onChange={(e) => setDateTime(e.target.value)}
               className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white h-12 rounded-xl" />
+            <p className="text-[10px] text-[oklch(0.40,0.04,290)]">Will be stored as YYYY/MM/DD HH:MM format</p>
           </div>
 
-          {/* Map */}
+          {/* Map — Kotlin: spinnerMap */}
           <div className="space-y-2">
             <Label className="text-xs text-[oklch(0.70,0.04,290)] font-semibold">Map</Label>
             <Select value={map} onValueChange={setMap}>
@@ -221,16 +726,14 @@ export default function CreateTournamentPage() {
                 <SelectValue placeholder="Select Map" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="bermuda">Bermuda</SelectItem>
-                <SelectItem value="purgatory">Purgatory</SelectItem>
-                <SelectItem value="kalahari">Kalahari</SelectItem>
-                <SelectItem value="alpine">Alpine</SelectItem>
-                <SelectItem value="nexterra">Nexterra</SelectItem>
+                {MAPS.map((m) => (
+                  <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
 
-          {/* Type: Solo/Duo/Squad */}
+          {/* Type: Solo/Duo/Squad — Kotlin: spinnerType */}
           <div className="space-y-2">
             <Label className="text-xs text-[oklch(0.70,0.04,290)] font-semibold">Type (Solo / Duo / Squad)</Label>
             <Select value={type} onValueChange={setType}>
@@ -238,9 +741,9 @@ export default function CreateTournamentPage() {
                 <SelectValue placeholder="Select Type" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="solo">Solo</SelectItem>
-                <SelectItem value="duo">Duo</SelectItem>
-                <SelectItem value="squad">Squad</SelectItem>
+                {TYPES.map((t) => (
+                  <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
@@ -253,9 +756,10 @@ export default function CreateTournamentPage() {
                 className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)] h-12 rounded-xl" />
             </div>
             <div className="space-y-2">
-              <Label className="text-xs text-[oklch(0.70,0.04,290)] font-semibold">Joining Fee <span className="text-red-400">*</span></Label>
-              <Input type="number" value={joiningFee} onChange={(e) => setJoiningFee(e.target.value)} placeholder="e.g. 30"
+              <Label className="text-xs text-[oklch(0.70,0.04,290)] font-semibold">Joining Fee (Coins) <span className="text-red-400">*</span></Label>
+              <Input type="number" step="any" value={joiningFee} onChange={(e) => setJoiningFee(e.target.value)} placeholder="e.g. 30"
                 className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)] h-12 rounded-xl" />
+              <p className="text-[10px] text-[oklch(0.40,0.04,290)]">Enter in Rupees (1.5 = 1.5 Coins)</p>
             </div>
           </div>
 
@@ -267,17 +771,19 @@ export default function CreateTournamentPage() {
                 className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)] h-12 rounded-xl" />
             </div>
             <div className="space-y-2">
-              <Label className="text-xs text-[oklch(0.70,0.04,290)] font-semibold">Per Kill Reward</Label>
-              <Input type="number" value={perKill} onChange={(e) => setPerKill(e.target.value)} placeholder="e.g. 5"
+              <Label className="text-xs text-[oklch(0.70,0.04,290)] font-semibold">Per Kill Reward (Coins)</Label>
+              <Input type="number" step="any" value={perKill} onChange={(e) => setPerKill(e.target.value)} placeholder="e.g. 5"
                 className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)] h-12 rounded-xl" />
+              <p className="text-[10px] text-[oklch(0.40,0.04,290)]">Enter in Rupees</p>
             </div>
           </div>
 
           {/* Price Pool */}
           <div className="space-y-2">
-            <Label className="text-xs text-[oklch(0.70,0.04,290)] font-semibold">Price Pool</Label>
-            <Input type="number" value={pricePool} onChange={(e) => setPricePool(e.target.value)} placeholder="Enter total price pool"
+            <Label className="text-xs text-[oklch(0.70,0.04,290)] font-semibold">Price Pool (Coins)</Label>
+            <Input type="number" step="any" value={pricePool} onChange={(e) => setPricePool(e.target.value)} placeholder="Enter total price pool"
               className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)] h-12 rounded-xl" />
+            <p className="text-[10px] text-[oklch(0.40,0.04,290)]">Enter in Rupees — stored as Paisa in database</p>
           </div>
 
           {/* Room ID + Room Password */}
@@ -301,7 +807,7 @@ export default function CreateTournamentPage() {
               className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)] h-12 rounded-xl" />
           </div>
 
-          {/* Status — Create = only Upcoming, Update = all */}
+          {/* Status — Create = only Upcoming, Update = all — Kotlin: spinnerStatus */}
           <div className="space-y-2">
             <Label className="text-xs text-[oklch(0.70,0.04,290)] font-semibold">Status</Label>
             {mode === 'create' ? (
@@ -316,20 +822,32 @@ export default function CreateTournamentPage() {
                   <SelectValue placeholder="Select Status" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="upcoming">Upcoming</SelectItem>
-                  <SelectItem value="ongoing">Ongoing</SelectItem>
-                  <SelectItem value="completed">Completed</SelectItem>
+                  {STATUSES.map((s) => (
+                    <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             )}
           </div>
         </div>
 
-        {/* Submit */}
-        <Button onClick={handleSubmit} disabled={loading}
-          className={`w-full h-12 rounded-xl text-white font-semibold text-base shadow-lg ${mode === 'create' ? 'bg-gradient-to-r from-orange-500 to-orange-600 shadow-orange-500/20' : 'bg-gradient-to-r from-blue-500 to-indigo-600 shadow-blue-500/20'}`}>
-          {loading ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> :
-            mode === 'create' ? <><Save className="w-5 h-5 mr-2" /> Create Tournament</> : <><ArrowRight className="w-5 h-5 mr-2" /> Update Tournament</>}
+        {/* Submit — Kotlin: btnCreateTournament / btnUpdateTournament */}
+        <Button
+          onClick={mode === 'create' ? handleCreate : handleUpdate}
+          disabled={loading}
+          className={`w-full h-12 rounded-xl text-white font-semibold text-base shadow-lg disabled:opacity-40 disabled:cursor-not-allowed ${
+            mode === 'create'
+              ? 'bg-gradient-to-r from-orange-500 to-orange-600 shadow-orange-500/20'
+              : 'bg-gradient-to-r from-blue-500 to-indigo-600 shadow-blue-500/20'
+          }`}
+        >
+          {loading ? (
+            <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+          ) : mode === 'create' ? (
+            <><Save className="w-5 h-5 mr-2" /> Create Tournament</>
+          ) : (
+            <><ArrowRight className="w-5 h-5 mr-2" /> Update Tournament</>
+          )}
         </Button>
       </div>
     </div>
