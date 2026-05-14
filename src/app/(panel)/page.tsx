@@ -1,7 +1,21 @@
 'use client';
 
+import { useMemo } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
+import { useAuth } from '@/context/AuthContext';
+
+// Indian time (IST) ke anusar greeting return karta hai
+function getIndianGreeting(name?: string): string {
+  const now = new Date();
+  // IST offset: UTC + 5:30 = 330 minutes
+  const istTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  const hour = istTime.getHours();
+
+  const firstName = name ? name.split(' ')[0] : 'Host';
+  const suffix = hour < 12 ? 'Good Morning' : hour < 17 ? 'Good Afternoon' : hour < 21 ? 'Good Evening' : 'Good Night';
+  return `${suffix}, ${firstName}!`;
+}
 
 const steps = [
   {
@@ -49,6 +63,11 @@ const steps = [
 ];
 
 export default function Dashboard() {
+  const { hostData } = useAuth();
+
+  // Indian time ke anusar greeting — memoize taaki har render pe na call ho
+  const greeting = useMemo(() => getIndianGreeting(hostData?.fullName), [hostData?.fullName]);
+
   return (
     <div className="min-h-screen">
       {/* custom header for dashboard */}
@@ -64,19 +83,30 @@ export default function Dashboard() {
             <p className="text-sm text-white/70 mt-0.5">Host Panel Dashboard</p>
           </div>
           <Link href="/profile" className="text-center cursor-pointer hover:scale-105 active:scale-95 transition-transform">
-            <div className="w-11 h-11 rounded-full bg-white/20 flex items-center justify-center text-xl backdrop-blur-sm">
-              👤
-            </div>
-            <p className="text-xs mt-1 font-semibold text-white/90">Host</p>
+            {/* host profile image ya default avatar */}
+            {hostData?.selfieUrl ? (
+              <img
+                src={hostData.selfieUrl}
+                alt={hostData.fullName || 'Host'}
+                className="w-11 h-11 rounded-full object-cover backdrop-blur-sm border-2 border-white/30 shadow-lg"
+              />
+            ) : (
+              <div className="w-11 h-11 rounded-full bg-white/20 flex items-center justify-center text-xl backdrop-blur-sm border-2 border-white/30">
+                👤
+              </div>
+            )}
+            <p className="text-xs mt-1 font-semibold text-white/90 truncate max-w-[80px]">
+              {hostData?.fullName?.split(' ')[0] || 'Host'}
+            </p>
           </Link>
         </div>
       </header>
 
       <div className="max-w-4xl mx-auto px-4 lg:px-6 py-6 space-y-6">
-        {/* welcome section */}
+        {/* time-based greeting section */}
         <div>
           <h2 className="text-2xl lg:text-3xl font-bold text-white">
-            Welcome, Host!
+            {greeting}
           </h2>
           <p className="text-[oklch(0.55,0.04,290)] mt-1">
             Follow the steps below to manage your tournaments
