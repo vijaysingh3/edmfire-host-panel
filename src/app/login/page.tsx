@@ -1,41 +1,38 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { Mail, Lock, Eye, EyeOff, Zap } from 'lucide-react';
+import { Mail, Lock, Eye, EyeOff } from 'lucide-react';
 import Image from 'next/image';
+import { toast } from 'sonner';
 
 export default function LoginPage() {
-  const { login, demoLogin } = useAuth();
+  const { login, isLoading } = useAuth();
+  const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleLogin = () => {
-    setError('');
-    if (!email || !password) {
-      setError('Email aur Password dono chahiye');
+  const handleLogin = async () => {
+    // basic validation
+    if (!email.trim() || !password.trim()) {
+      toast.error('Email and Password are required');
       return;
     }
     setLoading(true);
-    // simulate delay
-    setTimeout(() => {
-      login(email, password);
+    const error = await login(email.trim(), password);
+    if (error) {
+      toast.error('Login Failed', { description: error });
       setLoading(false);
-    }, 800);
-  };
-
-  const handleDemo = () => {
-    setLoading(true);
-    setTimeout(() => {
-      demoLogin();
-      setLoading(false);
-    }, 500);
+    } else {
+      toast.success('Welcome back!', { description: 'Redirecting to dashboard...' });
+      router.push('/');
+    }
   };
 
   return (
@@ -74,6 +71,7 @@ export default function LoginPage() {
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="host@edmfire.com"
                   className="pl-10 h-12 rounded-xl bg-[oklch(0.22,0.04,290)] border-[oklch(0.30,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)] focus:border-purple-500 focus:ring-purple-500/20"
+                  disabled={loading || isLoading}
                 />
               </div>
             </div>
@@ -92,6 +90,7 @@ export default function LoginPage() {
                   placeholder="Enter your password"
                   className="pl-10 pr-10 h-12 rounded-xl bg-[oklch(0.22,0.04,290)] border-[oklch(0.30,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)] focus:border-purple-500 focus:ring-purple-500/20"
                   onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+                  disabled={loading || isLoading}
                 />
                 <button
                   type="button"
@@ -107,49 +106,24 @@ export default function LoginPage() {
               </div>
             </div>
 
-            {/* error message */}
-            {error && (
-              <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
-                {error}
-              </p>
-            )}
-
             {/* login button */}
             <Button
               onClick={handleLogin}
-              disabled={loading}
+              disabled={loading || isLoading}
               className="w-full h-12 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-700 hover:from-violet-700 hover:to-indigo-800 text-white font-semibold text-sm shadow-lg shadow-purple-500/20 transition-all duration-200"
             >
-              {loading ? (
+              {loading || isLoading ? (
                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
               ) : (
                 'Login'
               )}
-            </Button>
-
-            {/* divider */}
-            <div className="flex items-center gap-3">
-              <div className="flex-1 h-px bg-[oklch(0.30,0.06,290)]" />
-              <span className="text-xs text-[oklch(0.45,0.04,290)]">OR</span>
-              <div className="flex-1 h-px bg-[oklch(0.30,0.06,290)]" />
-            </div>
-
-            {/* demo button */}
-            <Button
-              onClick={handleDemo}
-              disabled={loading}
-              variant="secondary"
-              className="w-full h-12 rounded-xl bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 text-white font-semibold text-sm shadow-lg shadow-green-500/20 border-0 transition-all duration-200"
-            >
-              <Zap className="w-4 h-4 mr-2" />
-              View Demo
             </Button>
           </div>
         </div>
 
         {/* bottom text */}
         <p className="text-center text-[10px] text-[oklch(0.35,0.04,290)] mt-6">
-          EDMFire Host Panel v1.0 — Only UI, No Backend
+          EDMFire Host Panel v2.0 — Firebase Auth Enabled
         </p>
       </div>
     </div>
