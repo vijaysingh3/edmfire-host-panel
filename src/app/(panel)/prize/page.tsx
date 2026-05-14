@@ -104,7 +104,7 @@ export default function PrizePage() {
 
       appendLog('Remote Config fetched', 'SUCCESS');
       appendLog(`Database URL: ${rtdbUrl ? 'Received (' + rtdbUrl.length + ' chars)' : 'EMPTY'}`, rtdbUrl ? 'INFO' : 'WARNING');
-      appendLog(`Function URL: ${funUrl ? 'Received' : 'EMPTY'}`, funUrl ? 'INFO' : 'WARNING');
+      appendLog(`Function URL: ${funUrl ? '******************' : 'EMPTY'}`, funUrl ? 'INFO' : 'WARNING');
 
       if (!rtdbUrl) {
         appendLog('Warning: Database URL missing — tournament list won\'t load', 'ERROR');
@@ -483,7 +483,7 @@ export default function PrizePage() {
     appendLog(`Tournament: ${tournament.title}`, 'INFO');
     appendLog(`ID: ${id}`, 'INFO');
     appendLog(`Total Winners to pay: ${pending}`, 'INFO');
-    appendLog(`Function URL: ${funUrl.slice(0, 50)}...`, 'INFO');
+    appendLog('Function URL: ******************', 'INFO');
 
     // ── Start Distribution — Kotlin startDistribution() ──
     setDistributing(true);
