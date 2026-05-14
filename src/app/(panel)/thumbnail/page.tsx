@@ -135,9 +135,9 @@ export default function ThumbnailPage() {
       return;
     }
 
-    // Size validation (2MB max)
-    if (file.size > 2 * 1024 * 1024) {
-      toast.error('File too large', { description: `Max 2MB. Your file is ${(file.size / 1024 / 1024).toFixed(1)}MB` });
+    // Size validation (5MB max)
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('File too large', { description: `Max 5MB. Your file is ${(file.size / 1024 / 1024).toFixed(1)}MB` });
       return;
     }
 
