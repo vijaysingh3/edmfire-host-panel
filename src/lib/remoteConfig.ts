@@ -10,8 +10,8 @@ let remoteConfigInstance: RemoteConfig | null = null;
 export function getRemoteConfigInstance(): RemoteConfig {
   if (!remoteConfigInstance) {
     remoteConfigInstance = getRemoteConfig(app);
-    // Kotlin me bhi 3600 seconds tha
-    remoteConfigInstance.settings.minimumFetchIntervalMillis = 3600000;
+    // Admin panel ke liye har baar fresh fetch (Kotlin me 0 tha)
+    remoteConfigInstance.settings.minimumFetchIntervalMillis = 0;
   }
   return remoteConfigInstance;
 }
@@ -35,10 +35,10 @@ export function getRemoteString(key: string): string {
   return getValue(rc, key).asString();
 }
 
-// Pre-defined keys — project me jahan jahan use hoga
-// Agar Remote Config me key ka naam alag hai to yahan update karo
+// Pre-defined keys — exact match with Firebase Remote Config key names
+// Kotlin RemoteConfigHelper.kt se match kiya gaya hai
 export const RC_KEYS = {
   UNIVERSAL_IMAGE_UPLOADER_URL: 'UNIVERSAL_IMAGE_UPLOADER_URL',
-  RTDB_URL: 'RTDB_URL',           // Firebase RTDB base URL
-  RTDB_SECRET: 'RTDB_SECRET',     // Firebase RTDB database secret
+  RTDB_URL: 'FirebaseDatabase_url',         // Firebase RTDB base URL (Kotlin: getDatabaseUrl())
+  RTDB_SECRET: 'RECYCLABLE_DB_SECRET',       // Firebase RTDB database secret (Kotlin: getDatabaseSecret())
 } as const;

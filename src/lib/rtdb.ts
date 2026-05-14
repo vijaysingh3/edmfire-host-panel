@@ -103,3 +103,64 @@ export async function rtdbPatch(path: string, data: any): Promise<boolean> {
 
   return true;
 }
+
+// ✅ RTDB POST (Push) — Kotlin: universalWriter.postPushData()
+// Push data with auto-generated key (SDK push().setValue() equivalent)
+// Response: { "name": "-MxYz123abc" }
+export async function rtdbPush(path: string, data: any): Promise<string | null> {
+  const base = getBaseUrl();
+  const secret = getSecret();
+
+  if (!base || !secret) {
+    console.error('🔥 [RTDB] Base URL or Secret is empty');
+    return null;
+  }
+
+  const url = `${base}/${path}.json?auth=${secret}`;
+  console.log('🔥 [RTDB] POST (push):', path);
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    console.error('🔥 [RTDB] POST (push) failed:', res.status, errText);
+    return null;
+  }
+
+  const result = await res.json();
+  // Response: { "name": "-MxYz123abc" }
+  const generatedKey = result?.name || null;
+  console.log('🔥 [RTDB] POST (push) success, key:', generatedKey);
+  return generatedKey;
+}
+
+// ✅ RTDB DELETE — Kotlin: universalWriter.deleteData()
+// Remove data at path
+export async function rtdbDelete(path: string): Promise<boolean> {
+  const base = getBaseUrl();
+  const secret = getSecret();
+
+  if (!base || !secret) {
+    console.error('🔥 [RTDB] Base URL or Secret is empty');
+    return false;
+  }
+
+  const url = `${base}/${path}.json?auth=${secret}`;
+  console.log('🔥 [RTDB] DELETE:', path);
+
+  const res = await fetch(url, {
+    method: 'DELETE',
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    console.error('🔥 [RTDB] DELETE failed:', res.status, errText);
+    return false;
+  }
+
+  return true;
+}
