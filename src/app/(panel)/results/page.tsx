@@ -800,7 +800,7 @@ export default function ResultsPage() {
         )}
 
         {/* Result Toggle — Kotlin switchResult equivalent */}
-        {showResultToggle && (
+        {isTournamentValid && (
           <div className="rounded-xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.30,0.06,290)] p-3 flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-yellow-500/15 flex items-center justify-center shrink-0">
               <Info className="w-4 h-4 text-yellow-400" />
