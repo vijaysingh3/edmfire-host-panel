@@ -559,10 +559,11 @@ export default function PrizePage() {
     appendLog('Calling Firebase Function: price-distribution...', 'INFO');
 
     try {
-      // Request body — Kotlin: only tournamentType + tournamentId
+      // Request body — tournamentType + tournamentId + hostId
       const requestBody = {
         tournamentType,
         tournamentId: id,
+        hostId: currentUserId,
       };
 
       // Firebase ID Token — Kotlin: user.getIdToken(false).await()
