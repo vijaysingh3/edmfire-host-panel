@@ -26,7 +26,6 @@ import { useAuth } from '@/context/AuthContext';
 import {
   collection,
   query,
-  orderBy,
   onSnapshot,
   doc,
   onSnapshot as docOnSnapshot,
@@ -204,7 +203,10 @@ export default function WalletPage() {
     if (authLoading || !user) return;
 
     const txnRef = collection(db, 'hosts', user.uid, 'transactionHistory');
-    const q = query(txnRef, orderBy('processedAt', 'desc'));
+    // No orderBy on processedAt — entryFee & priceDistribution docs don't have it.
+    // Firestore silently skips docs missing the ordered field.
+    // Sort by document ID desc in JS instead (Firestore auto-IDs are chronologically ordered).
+    const q = query(txnRef);
 
     const unsubscribe = onSnapshot(q, (snap) => {
       const items: TransactionItem[] = [];
@@ -235,6 +237,8 @@ export default function WalletPage() {
           processedAt: data.processedAt,
         });
       });
+      // Sort newest first by document ID
+      items.sort((a, b) => b.id.localeCompare(a.id));
       setTransactions(items);
       setLoading(false);
     }, (err) => {
