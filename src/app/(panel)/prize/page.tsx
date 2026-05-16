@@ -15,12 +15,17 @@ import { toast } from 'sonner';
 import { useAuth } from '@/context/AuthContext';
 import { fetchRemoteConfig, getRemoteString, RC_KEYS } from '@/lib/remoteConfig';
 import { rtdbGet } from '@/lib/rtdb';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 import {
+  Activity,
+  ChevronDown,
   Gift,
   RefreshCw,
   Send,
   Terminal,
   Trash2,
+  Wallet,
 } from 'lucide-react';
 
 // ═══════════════════════════════════════════════════
@@ -66,9 +71,17 @@ function getCurrentTime(): string {
   });
 }
 
+// PAISA → "X Coins" display (NEVER show paisa / ₹ to user)
+function formatRupees(paisa: number): string {
+  const rupees = paisa / 100;
+  return rupees % 1 === 0 ? `${Math.round(rupees)} Coins` : `${parseFloat(rupees.toFixed(2))} Coins`;
+}
+
 export default function PrizePage() {
   const { user, isLoading: authLoading } = useAuth();
-  const logEndRef = useRef<HTMLDivElement>(null);
+
+  // ── Log toggle (default CLOSED) ──
+  const [logOpen, setLogOpen] = useState(false);
 
   // ── UI State — Kotlin spinnerTournamentType, etTournamentId ──
   const [tournamentType, setTournamentType] = useState('');
@@ -87,6 +100,13 @@ export default function PrizePage() {
   // ── Tournament data — Kotlin tournamentInfoMap, filteredTournaments ──
   const tournamentInfoMap = useRef<Record<string, TournamentInfo[]>>({});
   const [filteredTournaments, setFilteredTournaments] = useState<TournamentInfo[]>([]);
+
+  // ── Realtime Wallet Balance ──
+  const [walletBalance, setWalletBalance] = useState(0);
+  const [displayBalance, setDisplayBalance] = useState(0);
+  const [walletStatus, setWalletStatus] = useState<'idle' | 'deducting'>('idle');
+  const animationRef = useRef<number | null>(null);
+  const prevBalanceRef = useRef(0);
 
   // ═══════════════════════════════════════════════════
   // INIT — Kotlin onCreate → setupRemoteConfig() + loadTournamentIds()
@@ -124,10 +144,58 @@ export default function PrizePage() {
     init();
   }, [user, authLoading]);
 
-  // Auto-scroll log to bottom
+  // ── Realtime Wallet Balance (onSnapshot) ──
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [logs]);
+    if (authLoading || !user) return;
+
+    const walletDocRef = doc(db, 'hosts', user.uid, 'accountBalance', 'wallet');
+    const unsubscribe = onSnapshot(walletDocRef, (snap) => {
+      if (snap.exists()) {
+        const bal = snap.data()?.walletBalance || 0;
+        prevBalanceRef.current = walletBalance;
+        setWalletBalance(bal);
+        setWalletStatus('deducting');
+      }
+    }, () => {});
+
+    return () => unsubscribe();
+  }, [user, authLoading]);
+
+  // ── Animated Balance Counter (cubic ease-out ~1s) ──
+  useEffect(() => {
+    const target = walletBalance;
+
+    if (prevBalanceRef.current === target) {
+      setWalletStatus('idle');
+      return;
+    }
+
+    if (animationRef.current) {
+      cancelAnimationFrame(animationRef.current);
+    }
+
+    const startVal = displayBalance;
+    const startTime = performance.now();
+    const duration = 1000;
+    const easeOut = (t: number) => 1 - Math.pow(1 - t, 3);
+
+    const animate = (now: number) => {
+      const elapsed = now - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      const easedProgress = easeOut(progress);
+      const current = startVal + (target - startVal) * easedProgress;
+      setDisplayBalance(Math.round(current));
+
+      if (progress < 1) {
+        animationRef.current = requestAnimationFrame(animate);
+      } else {
+        setDisplayBalance(target);
+        setWalletStatus('idle');
+      }
+    };
+
+    animationRef.current = requestAnimationFrame(animate);
+  }, [walletBalance]);
 
   // ── Append to log — Kotlin appendResponse() with colored SpannableString ──
   const appendLog = (message: string, type: LogType = 'INFO') => {
@@ -626,7 +694,7 @@ export default function PrizePage() {
           }
 
           appendLog(
-            `\nRank ${rank}: ${userId} - ${userSuccess ? `Credited ₹${winningsRupees} Coins` : 'Failed'}`,
+            `\nRank ${rank}: ${userId} - ${userSuccess ? `Credited ${winningsRupees} Coins` : 'Failed'}`,
             userSuccess ? 'SUCCESS' : 'ERROR'
           );
         }
@@ -636,7 +704,7 @@ export default function PrizePage() {
         appendLog('\nSUMMARY:', 'SUCCESS');
         appendLog(`   Successful: ${successCount}`, 'SUCCESS');
         appendLog(`   Failed: ${failCount}`, failCount > 0 ? 'ERROR' : 'SUCCESS');
-        appendLog(`   Total Distributed: ₹${totalRupees} Coins`, 'SUCCESS');
+        appendLog(`   Total Distributed: ${totalRupees} Coins`, 'SUCCESS');
       }
 
       // Success ke baad selected type refresh — 1 query only (billing save)
@@ -703,6 +771,31 @@ export default function PrizePage() {
 
       <div className="max-w-4xl mx-auto px-4 lg:px-6 py-6 space-y-4">
 
+        {/* ── Realtime Wallet Balance ── */}
+        <div className="rounded-2xl bg-[oklch(0.16,0.04,290)] border border-[oklch(0.30,0.06,290)] p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500 to-yellow-600 flex items-center justify-center shadow-lg shadow-amber-500/20">
+                <Wallet className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <p className="text-[11px] text-[oklch(0.55,0.04,290)] font-semibold">Host Wallet Balance</p>
+                <p className={`text-xl font-extrabold tabular-nums transition-colors duration-500 ${
+                  walletStatus === 'deducting' ? 'text-red-400' : 'text-green-400'
+                }`}>
+                  {formatRupees(displayBalance)}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Activity className={`w-4 h-4 ${walletStatus === 'deducting' ? 'text-red-400 animate-pulse' : 'text-green-400'}`} />
+              <span className={`text-[11px] font-bold ${walletStatus === 'deducting' ? 'text-red-400' : 'text-green-400'}`}>
+                {walletStatus === 'deducting' ? 'Deducting...' : 'Live'}
+              </span>
+            </div>
+          </div>
+        </div>
+
         {/* Tournament Type + ID — Kotlin spinnerTournamentType + etTournamentId */}
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">
@@ -744,39 +837,43 @@ export default function PrizePage() {
           </Button>
         </div>
 
-        {/* Log Viewer Header */}
+        {/* Log Viewer Toggle */}
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
+          <button onClick={() => setLogOpen(!logOpen)}
+            className="flex items-center gap-2 transition-colors">
             <Terminal className="w-4 h-4 text-yellow-400" />
-            <span className="text-sm font-bold text-yellow-400">Activity Log</span>
-            {isLoading && <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse ml-1" />}
-          </div>
-          <button onClick={handleClearLog}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-red-500 to-orange-500 text-white text-[11px] font-bold shadow-lg shadow-red-500/20 active:scale-95 transition-transform">
-            <Trash2 className="w-3 h-3" /> CLEAR
+            <span className="text-sm font-bold text-yellow-400">Activity Log ({logs.length})</span>
+            <ChevronDown className={`w-4 h-4 text-yellow-400 transition-transform duration-300 ${logOpen ? 'rotate-180' : ''}`} />
           </button>
+          {logOpen && (
+            <button onClick={handleClearLog}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-red-500 to-orange-500 text-white text-[11px] font-bold shadow-lg shadow-red-500/20 active:scale-95 transition-transform">
+              <Trash2 className="w-3 h-3" /> CLEAR
+            </button>
+          )}
         </div>
 
-        {/* Log Viewer — Kotlin tvResponse + scrollViewResponse */}
-        <div className="rounded-2xl bg-[oklch(0.12,0.02,290)] border border-[oklch(0.28,0.05,290)] overflow-hidden">
-          <div className="p-3 h-[320px] lg:h-[400px] overflow-y-auto scrollbar-none">
-            {logs.length === 0 ? (
-              <p className="text-[11px] text-[oklch(0.35,0.04,290)] font-mono">
-                {configLoading ? 'Loading configuration...' : '[--:--:--] Ready to distribute prizes...'}
-              </p>
-            ) : (
-              <div className="space-y-0.5">
-                {logs.map((log, i) => (
-                  <p key={i} className={`text-[11px] font-mono leading-relaxed ${getLogColor(log.type)}`}>
-                    [{log.time}] {log.message}
-                  </p>
-                ))}
-                {isLoading && <span className="inline-block w-1.5 h-3 bg-yellow-400 animate-pulse ml-1" />}
-              </div>
-            )}
-            <div ref={logEndRef} />
+        {/* Log Viewer — Kotlin tvResponse + scrollViewResponse (toggle, default closed) */}
+        {logOpen && (
+          <div className="rounded-2xl bg-[oklch(0.12,0.02,290)] border border-[oklch(0.28,0.05,290)] overflow-hidden">
+            <div className="p-3 h-[320px] lg:h-[400px] overflow-y-auto scrollbar-none">
+              {logs.length === 0 ? (
+                <p className="text-[11px] text-[oklch(0.35,0.04,290)] font-mono">
+                  {configLoading ? 'Loading configuration...' : '[--:--:--] Ready to distribute prizes...'}
+                </p>
+              ) : (
+                <div className="space-y-0.5">
+                  {logs.map((log, i) => (
+                    <p key={i} className={`text-[11px] font-mono leading-relaxed ${getLogColor(log.type)}`}>
+                      [{log.time}] {log.message}
+                    </p>
+                  ))}
+                  {isLoading && <span className="inline-block w-1.5 h-3 bg-yellow-400 animate-pulse ml-1" />}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

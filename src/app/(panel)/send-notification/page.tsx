@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -18,6 +18,7 @@ import { rtdbGet } from '@/lib/rtdb';
 import { auth } from '@/lib/firebase';
 import {
   Bell,
+  ChevronDown,
   RefreshCw,
   Send,
   Terminal,
@@ -59,7 +60,7 @@ function getCurrentTime(): string {
 
 export default function SendNotificationPage() {
   const { user, isLoading: authLoading } = useAuth();
-  const logEndRef = useRef<HTMLDivElement>(null);
+  const [logOpen, setLogOpen] = useState(false);
 
   // ── State ──
   const [tournamentType, setTournamentType] = useState('');
@@ -103,11 +104,6 @@ export default function SendNotificationPage() {
     };
     init();
   }, [user, authLoading]);
-
-  // Auto-scroll log to bottom — Kotlin fullScroll(FOCUS_DOWN)
-  useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [logs]);
 
   // ── Append to log — Kotlin appendToLog() with colored SpannableString ──
   const appendLog = (message: string, type: LogType = 'INFO') => {
@@ -399,36 +395,41 @@ export default function SendNotificationPage() {
             className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)] h-10 rounded-xl text-sm" />
         </div>
 
-        {/* Log Viewer Header — Kotlin tvResponse header */}
+        {/* Log Viewer Toggle (default closed) */}
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
+          <button onClick={() => setLogOpen(!logOpen)}
+            className="flex items-center gap-2 transition-colors">
             <Terminal className="w-4 h-4 text-yellow-400" />
-            <span className="text-sm font-bold text-yellow-400">Activity Log</span>
-          </div>
-          <button onClick={handleClearLog}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-red-500 to-orange-500 text-white text-[11px] font-bold shadow-lg shadow-red-500/20 active:scale-95 transition-transform">
-            <Trash2 className="w-3 h-3" /> CLEAR
+            <span className="text-sm font-bold text-yellow-400">Activity Log ({logs.length})</span>
+            <ChevronDown className={`w-4 h-4 text-yellow-400 transition-transform duration-300 ${logOpen ? 'rotate-180' : ''}`} />
           </button>
+          {logOpen && (
+            <button onClick={handleClearLog}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-red-500 to-orange-500 text-white text-[11px] font-bold shadow-lg shadow-red-500/20 active:scale-95 transition-transform">
+              <Trash2 className="w-3 h-3" /> CLEAR
+            </button>
+          )}
         </div>
 
-        {/* Log Viewer — Kotlin tvResponse + scrollViewResponse */}
-        <div className="rounded-2xl bg-[oklch(0.12,0.02,290)] border border-[oklch(0.28,0.05,290)] overflow-hidden">
-          <div className="p-3 h-[320px] lg:h-[400px] overflow-y-auto scrollbar-none">
-            {logs.length === 0 ? (
-              <p className="text-[11px] text-[oklch(0.35,0.04,290)] font-mono">[--:--:--] Ready to send notifications...</p>
-            ) : (
-              <div className="space-y-0.5">
-                {logs.map((log, i) => (
-                  <p key={i} className={`text-[11px] font-mono leading-relaxed ${getLogColor(log.type)}`}>
-                    [{log.time}] {log.message}
-                  </p>
-                ))}
-                {sending && <span className="inline-block w-1.5 h-3 bg-yellow-400 animate-pulse ml-1" />}
-              </div>
-            )}
-            <div ref={logEndRef} />
+        {/* Log Viewer — Kotlin tvResponse + scrollViewResponse (toggle, default closed) */}
+        {logOpen && (
+          <div className="rounded-2xl bg-[oklch(0.12,0.02,290)] border border-[oklch(0.28,0.05,290)] overflow-hidden">
+            <div className="p-3 h-[320px] lg:h-[400px] overflow-y-auto scrollbar-none">
+              {logs.length === 0 ? (
+                <p className="text-[11px] text-[oklch(0.35,0.04,290)] font-mono">[--:--:--] Ready to send notifications...</p>
+              ) : (
+                <div className="space-y-0.5">
+                  {logs.map((log, i) => (
+                    <p key={i} className={`text-[11px] font-mono leading-relaxed ${getLogColor(log.type)}`}>
+                      [{log.time}] {log.message}
+                    </p>
+                  ))}
+                  {sending && <span className="inline-block w-1.5 h-3 bg-yellow-400 animate-pulse ml-1" />}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
