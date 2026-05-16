@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -13,15 +13,16 @@ import {
   User,
   Zap,
   Shield,
-  ShieldAlert,
+  ShieldCheck,
   CircleDot,
-  Terminal,
-  Trash2,
   RefreshCw,
   Skull,
   Crosshair,
   Flame,
   Award,
+  Clock,
+  Gamepad2,
+  Timer,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { fetchRemoteConfig, getRemoteString, RC_KEYS } from '@/lib/remoteConfig';
@@ -39,7 +40,7 @@ const metaPath = (type: string, id: string) =>
   `Tournaments/TournamentMeta/${type}/${id}`;
 
 // ═══════════════════════════════════════════════════
-// BANK METHOD — PAISA → RUPEES + Coins
+// BANK METHOD — PAISA → Coins
 // ═══════════════════════════════════════════════════
 function formatRupees(paisa: number): string {
   if (!paisa || paisa <= 0) return 'Free';
@@ -88,10 +89,10 @@ interface TournamentMeta {
   joinedCount: number;
   maxSlots: number;
   dateTime: string;
-  mode: string;
+  mode: string;           // RTDB Mode field (BattleRoyal, ClashSquad, etc.)
+  type: string;           // RTDB Type field (Solo, Duo, Squad)
   map: string;
   bannerUrl: string;
-  type: string;
   createdAt: string;
 }
 
@@ -104,18 +105,6 @@ interface TournamentDetails {
   description: string;
   lastUpdated: string;
   videoUrl: string;
-}
-
-// ═══════════════════════════════════════════════════
-// LOG TYPES
-// ═══════════════════════════════════════════════════
-type LogType = 'INFO' | 'SUCCESS' | 'WARNING' | 'ERROR';
-interface LogEntry { message: string; type: LogType; time: string; }
-
-function getCurrentTime(): string {
-  return new Date().toLocaleTimeString('en-IN', {
-    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
-  });
 }
 
 // ═══════════════════════════════════════════════════
@@ -135,6 +124,27 @@ const statusColors: Record<string, string> = {
 };
 
 // ═══════════════════════════════════════════════════
+// PLAYER STAT CELL — Gaming style mini card
+// ═══════════════════════════════════════════════════
+function PStatCell({ label, value, icon, bg, text }: {
+  label: string;
+  value: string;
+  icon?: React.ReactNode;
+  bg?: string;
+  text?: string;
+}) {
+  return (
+    <div className={`rounded-lg px-2 py-1.5 ${bg || 'bg-[oklch(0.22,0.04,290)]'}`}>
+      <p className="text-[8px] font-bold uppercase tracking-wider opacity-60 mb-0.5">{label}</p>
+      <div className="flex items-center gap-1">
+        {icon && <span className="shrink-0">{icon}</span>}
+        <p className={`text-xs font-bold leading-tight ${text || 'text-white'}`}>{value}</p>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════
 // MAIN COMPONENT
 // ═══════════════════════════════════════════════════
 export default function TournamentDetailPage() {
@@ -144,7 +154,6 @@ export default function TournamentDetailPage() {
   const type = searchParams.get('type') || '';
 
   const { authLoading } = useAuth();
-  const logEndRef = useRef<HTMLDivElement>(null);
 
   // ── Data State ──
   const [meta, setMeta] = useState<TournamentMeta | null>(null);
@@ -153,29 +162,11 @@ export default function TournamentDetailPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // ── Log State ──
-  const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [showLog, setShowLog] = useState(false);
-
-  useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [logs]);
-
-  const appendLog = (message: string, type: LogType = 'INFO') => {
-    setLogs((prev) => [...prev, { message, type, time: getCurrentTime() }]);
-  };
-
-  const handleClearLog = () => {
-    setLogs([]);
-    appendLog('Logs cleared', 'SUCCESS');
-  };
-
   // ═══════════════════════════════════════════════════
   // LOAD TOURNAMENT DATA
   // ═══════════════════════════════════════════════════
   const loadTournament = async (isRefresh = false) => {
     if (!type || !id) {
-      appendLog('Missing tournament type or ID in URL', 'ERROR');
       setLoading(false);
       setRefreshing(false);
       return;
@@ -184,41 +175,33 @@ export default function TournamentDetailPage() {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
 
-    appendLog(`Loading tournament: ${type}/${id}`, 'INFO');
-
     try {
-      // Fresh Remote Config fetch
       await fetchRemoteConfig();
-      appendLog('Remote Config fetched', 'SUCCESS');
 
-      // Fetch TournamentMeta + TournamentDetails in parallel
       const [metaData, detailData] = await Promise.all([
-        rtdbGet(metaPath(type, id)).catch((e) => { appendLog(`Meta fetch failed: ${e.message}`, 'WARNING'); return null; }),
-        rtdbGet(basePath(type, id)).catch((e) => { appendLog(`Details fetch failed: ${e.message}`, 'WARNING'); return null; }),
+        rtdbGet(metaPath(type, id)).catch(() => null),
+        rtdbGet(basePath(type, id)).catch(() => null),
       ]);
 
-      // Parse Meta
+      // Parse Meta — RTDB field mapping: Mode=tournamentMode, Type=gameType
       if (metaData && typeof metaData === 'object') {
         const m = metaData as Record<string, any>;
         setMeta({
           title: m.Title || id,
           status: m.Status || 'Unknown',
           joiningFee: m.JoiningFee || 0,
-          prizePool: m.PrizePool || 0,
+          prizePool: m.PricePool || 0,
           perKill: m.PerKill || 0,
           joinedCount: m.JoinedPlayersCount || 0,
           maxSlots: m.SlotNumbers || 0,
           dateTime: m.DateTime || '',
-          mode: m.Type || '',
+          mode: m.Mode || type,        // RTDB Mode = BattleRoyal/ClashSquad/LoneWolf
+          type: m.Type || '',          // RTDB Type = Solo/Duo/Squad
           map: m.Map || '',
           bannerUrl: m.BannerUrl || '',
-          type: m.Mode || type,
           createdAt: m.CreatedAt || '',
         });
-        appendLog(`Meta: ${m.Title || id} | Status: ${m.Status || '?'}`, 'SUCCESS');
-        appendLog(`JoiningFee: ${formatRupees(m.JoiningFee || 0)} | PrizePool: ${formatRupees(m.PrizePool || 0)}`, 'INFO');
       } else {
-        appendLog('Tournament meta not found', 'ERROR');
         toast.error('Tournament not found');
       }
 
@@ -235,20 +218,13 @@ export default function TournamentDetailPage() {
           lastUpdated: d.LastUpdated || '',
           videoUrl: d.VideoUrl || '',
         });
-        appendLog(`Details: RoomID=${d.RoomID || 'N/A'} | HostUID=${d.HostUID ? '***' : 'N/A'}`, 'INFO');
 
-        // Parse JoinedPlayers
         if (d.JoinedPlayers) {
           parseJoinedPlayers(d.JoinedPlayers);
-        } else {
-          appendLog('No JoinedPlayers found', 'WARNING');
         }
-      } else {
-        appendLog('Tournament details not found', 'WARNING');
       }
 
     } catch (e: any) {
-      appendLog(`Load failed: ${e.message}`, 'ERROR');
       toast.error('Failed to load tournament', { description: e.message });
     } finally {
       setLoading(false);
@@ -268,7 +244,6 @@ export default function TournamentDetailPage() {
     const list: PlayerData[] = [];
 
     if (ARRAY_FORMAT_TYPES.includes(type)) {
-      // Array format (null-padded, index 0 = null)
       const arr = Array.isArray(raw) ? raw : convertToArray(raw);
       for (let i = 0; i < arr.length; i++) {
         const item = arr[i];
@@ -294,7 +269,6 @@ export default function TournamentDetailPage() {
         });
       }
     } else {
-      // Object format — key is seat number
       if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
         for (const [key, val] of Object.entries(raw)) {
           const obj = val as Record<string, any>;
@@ -323,7 +297,6 @@ export default function TournamentDetailPage() {
     }
 
     setPlayers(list);
-    appendLog(`Players loaded: ${list.length}`, list.length > 0 ? 'SUCCESS' : 'WARNING');
   };
 
   const convertToArray = (obj: any): any[] => {
@@ -336,18 +309,8 @@ export default function TournamentDetailPage() {
     return arr;
   };
 
-  // Check if results are available (any player has kills/rank data)
+  // Check if results are available
   const hasResults = players.some((p) => p.kills !== undefined || p.rank !== undefined);
-
-  // ── Log color ──
-  const getLogColor = (t: LogType): string => {
-    switch (t) {
-      case 'SUCCESS': return 'text-green-400';
-      case 'WARNING': return 'text-orange-400';
-      case 'ERROR': return 'text-red-400';
-      default: return 'text-[oklch(0.55,0.04,290)]';
-    }
-  };
 
   const tc = typeConfig[type] || typeConfig.BattleRoyal;
 
@@ -373,6 +336,11 @@ export default function TournamentDetailPage() {
                 <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-semibold bg-white/10 text-white/80`}>
                   {tc.icon} {tc.label}
                 </span>
+                {meta?.type && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-semibold bg-emerald-500/20 text-emerald-300">
+                    <Gamepad2 className="w-3 h-3" /> {meta.type}
+                  </span>
+                )}
                 {meta?.status && (
                   <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-semibold border ${statusColors[meta.status] || ''}`}>
                     {meta.status}
@@ -447,17 +415,9 @@ export default function TournamentDetailPage() {
                 </div>
               )}
 
-              {/* Mode */}
-              {meta.mode && (
-                <div className="p-3 rounded-xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.30,0.06,290)]">
-                  <p className="text-[10px] text-[oklch(0.45,0.04,290)]">Mode</p>
-                  <p className="text-sm font-bold text-white mt-0.5">{meta.mode}</p>
-                </div>
-              )}
-
               {/* Payment Status */}
               <div className="p-3 rounded-xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.30,0.06,290)]">
-                <p className="text-[10px] text-[oklch(0.45,0.04,290)]">Payment Status</p>
+                <p className="text-[10px] text-[oklch(0.45,0.04,290)]">Payment</p>
                 <p className={`text-sm font-bold mt-0.5 ${details.paymentStatus ? 'text-green-400' : 'text-orange-400'}`}>
                   {details.paymentStatus ? 'Settled' : 'Pending'}
                 </p>
@@ -465,10 +425,19 @@ export default function TournamentDetailPage() {
 
               {/* Result Status */}
               <div className="p-3 rounded-xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.30,0.06,290)]">
-                <p className="text-[10px] text-[oklch(0.45,0.04,290)]">Result Status</p>
+                <p className="text-[10px] text-[oklch(0.45,0.04,290)]">Result</p>
                 <p className={`text-sm font-bold mt-0.5 ${details.resultStatus ? 'text-green-400' : 'text-orange-400'}`}>
                   {details.resultStatus ? 'Published' : 'Pending'}
                 </p>
+              </div>
+
+              {/* Slot Numbers */}
+              <div className="p-3 rounded-xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.30,0.06,290)]">
+                <p className="text-[10px] text-[oklch(0.45,0.04,290)]">Slots</p>
+                <div className="flex items-center gap-1 mt-0.5">
+                  <Users className="w-3.5 h-3.5 text-blue-400" />
+                  <span className="text-sm font-bold text-white">{meta.joinedCount}/{meta.maxSlots}</span>
+                </div>
               </div>
             </div>
 
@@ -495,7 +464,7 @@ export default function TournamentDetailPage() {
             </button>
 
             {/* Players List */}
-            <div className="space-y-2">
+            <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Users className="w-4 h-4 text-[oklch(0.60,0.04,290)]" />
@@ -512,90 +481,162 @@ export default function TournamentDetailPage() {
                   <p className="text-xs text-[oklch(0.40,0.04,290)]">No players joined yet</p>
                 </div>
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-2.5">
                   {players.map((player, i) => {
                     const hasResult = player.kills !== undefined || player.rank !== undefined;
                     return (
                       <div
                         key={`${player.playerKey}-${i}`}
-                        className="flex items-center gap-3 p-3.5 rounded-xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.25,0.05,290)]"
+                        className="rounded-xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.25,0.05,290)] overflow-hidden"
                       >
-                        {/* Serial + Avatar */}
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span className="text-[10px] font-bold text-[oklch(0.40,0.04,290)] w-4 text-center">
-                            {i + 1}
-                          </span>
-                          <div className="w-9 h-9 rounded-full bg-gradient-to-br from-purple-500 to-fuchsia-600 flex items-center justify-center text-white text-xs font-bold">
-                            {player.inGameName ? player.inGameName.charAt(0).toUpperCase() : '?'}
+                        {/* Player Header — Name + Payment Badge */}
+                        <div className="flex items-center gap-2.5 px-3 py-2.5 bg-gradient-to-r from-purple-500/10 via-transparent to-transparent">
+                          <div className="flex items-center gap-2 min-w-0 shrink-0">
+                            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-fuchsia-600 flex items-center justify-center text-white text-xs font-bold shrink-0">
+                              {player.inGameName ? player.inGameName.charAt(0).toUpperCase() : '?'}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-sm font-semibold text-white truncate leading-tight">
+                                {player.inGameName || 'Unknown'}
+                              </p>
+                              <p className="text-[10px] text-[oklch(0.50,0.04,290)] font-mono leading-tight mt-0.5">
+                                UID: {player.inGameUID || '-'}
+                              </p>
+                            </div>
                           </div>
+                          <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-semibold border shrink-0 ml-auto ${
+                            player.paymentStatus
+                              ? 'border-green-500/30 text-green-400 bg-green-500/10'
+                              : 'border-yellow-500/30 text-yellow-400 bg-yellow-500/10'
+                          }`}>
+                            {player.paymentStatus ? <ShieldCheck className="w-3 h-3" /> : <CircleDot className="w-3 h-3" />}
+                            {player.paymentStatus ? 'Paid' : 'Unpaid'}
+                          </span>
                         </div>
 
-                        {/* Info */}
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-white truncate">
-                            {player.inGameName || 'Unknown'}
-                          </p>
-                          <p className="text-[10px] text-[oklch(0.45,0.04,290)]">
-                            UID: {player.inGameUID || '-'} &middot; Seat: {player.positionSeat || '-'} &middot; Lvl: {player.inGameLevel || '-'}
-                            {player.joinTime > 0 && ` \u00b7 ${formatJoinTime(player.joinTime)}`}
-                          </p>
-                          {/* Fee Info */}
-                          <div className="flex items-center gap-2 mt-0.5">
-                            <span className="text-[10px] text-yellow-400">
-                              Fee: {formatRupees(player.joiningFee)}
-                            </span>
-                            {player.finalAmount > 0 && (
-                              <span className="text-[10px] text-green-400">
-                                Paid: {formatRupees(player.finalAmount)}
-                              </span>
-                            )}
-                            {player.referralBonusUsed > 0 && (
-                              <span className="text-[10px] text-purple-400">
-                                Referral: {formatRupees(player.referralBonusUsed)}
-                              </span>
-                            )}
-                          </div>
-                          {/* Result Stats */}
-                          {hasResult && (
-                            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                              {player.rank !== undefined && (
-                                <span className="inline-flex items-center gap-0.5 text-[10px] text-amber-400">
-                                  <Award className="w-2.5 h-2.5" /> Rank #{player.rank}
-                                </span>
-                              )}
-                              {player.kills !== undefined && (
-                                <span className="inline-flex items-center gap-0.5 text-[10px] text-red-400">
-                                  <Skull className="w-2.5 h-2.5" /> {player.kills} Kills
-                                </span>
-                              )}
-                              {player.assists !== undefined && (
-                                <span className="inline-flex items-center gap-0.5 text-[10px] text-blue-400">
-                                  <Shield className="w-2.5 h-2.5" /> {player.assists} Assists
-                                </span>
-                              )}
-                              {player.damage !== undefined && (
-                                <span className="inline-flex items-center gap-0.5 text-[10px] text-orange-400">
-                                  <Flame className="w-2.5 h-2.5" /> {player.damage} Dmg
-                                </span>
-                              )}
-                              {player.coinsEarned !== undefined && player.coinsEarned > 0 && (
-                                <span className="inline-flex items-center gap-0.5 text-[10px] text-green-400 font-bold">
-                                  <Coins className="w-2.5 h-2.5" /> +{formatRupees(player.coinsEarned)}
-                                </span>
-                              )}
-                            </div>
+                        {/* Player Info Row — Seat, Level, Join Time */}
+                        <div className="grid grid-cols-3 gap-1.5 px-2.5 py-2">
+                          <PStatCell
+                            label="Seat"
+                            value={String(player.positionSeat || '-')}
+                            icon={<Target className="w-3 h-3 text-cyan-400" />}
+                            bg="bg-cyan-500/8"
+                            text="text-cyan-300"
+                          />
+                          <PStatCell
+                            label="Level"
+                            value={String(player.inGameLevel || '-')}
+                            icon={<Shield className="w-3 h-3 text-blue-400" />}
+                            bg="bg-blue-500/8"
+                            text="text-blue-300"
+                          />
+                          <PStatCell
+                            label="Joined"
+                            value={player.joinTime > 0 ? formatJoinTime(player.joinTime) : '-'}
+                            icon={<Clock className="w-3 h-3 text-[oklch(0.50,0.04,290)]" />}
+                            bg="bg-[oklch(0.20,0.04,290)]"
+                            text="text-[oklch(0.65,0.04,290)]"
+                          />
+                        </div>
+
+                        {/* Fee Info Row */}
+                        <div className="grid grid-cols-2 gap-1.5 px-2.5 pb-2">
+                          <PStatCell
+                            label="Fee"
+                            value={formatRupees(player.joiningFee)}
+                            icon={<Coins className="w-3 h-3 text-yellow-400" />}
+                            bg="bg-yellow-500/8"
+                            text="text-yellow-300"
+                          />
+                          {player.finalAmount > 0 ? (
+                            <PStatCell
+                              label="Paid"
+                              value={formatRupees(player.finalAmount)}
+                              icon={<Coins className="w-3 h-3 text-green-400" />}
+                              bg="bg-green-500/8"
+                              text="text-green-300"
+                            />
+                          ) : player.referralBonusUsed > 0 ? (
+                            <PStatCell
+                              label="Referral"
+                              value={formatRupees(player.referralBonusUsed)}
+                              icon={<Coins className="w-3 h-3 text-purple-400" />}
+                              bg="bg-purple-500/8"
+                              text="text-purple-300"
+                            />
+                          ) : (
+                            <PStatCell
+                              label="Paid"
+                              value="-"
+                              bg="bg-[oklch(0.20,0.04,290)]"
+                              text="text-[oklch(0.40,0.04,290)]"
+                            />
                           )}
                         </div>
 
-                        {/* Payment Status Badge */}
-                        <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-semibold border shrink-0 ${
-                          player.paymentStatus
-                            ? 'border-green-500/30 text-green-400 bg-green-500/10'
-                            : 'border-yellow-500/30 text-yellow-400 bg-yellow-500/10'
-                        }`}>
-                          {player.paymentStatus ? <Shield className="w-3 h-3" /> : <CircleDot className="w-3 h-3" />}
-                          {player.paymentStatus ? 'Paid' : 'Unpaid'}
-                        </span>
+                        {/* Result Stats — Only if results available */}
+                        {hasResult && (
+                          <div className="border-t border-[oklch(0.25,0.05,290)]">
+                            <div className="grid grid-cols-3 gap-1.5 px-2.5 py-2">
+                              {player.rank !== undefined && (
+                                <PStatCell
+                                  label="Rank"
+                                  value={`#${player.rank}`}
+                                  icon={<Award className="w-3 h-3 text-amber-400" />}
+                                  bg="bg-amber-500/10"
+                                  text="text-amber-300"
+                                />
+                              )}
+                              {player.kills !== undefined && (
+                                <PStatCell
+                                  label="Kills"
+                                  value={String(player.kills)}
+                                  icon={<Skull className="w-3 h-3 text-red-400" />}
+                                  bg="bg-red-500/10"
+                                  text="text-red-300"
+                                />
+                              )}
+                              {player.assists !== undefined && (
+                                <PStatCell
+                                  label="Assists"
+                                  value={String(player.assists)}
+                                  icon={<Shield className="w-3 h-3 text-blue-400" />}
+                                  bg="bg-blue-500/10"
+                                  text="text-blue-300"
+                                />
+                              )}
+                            </div>
+                            {(player.damage !== undefined || (player.coinsEarned !== undefined && player.coinsEarned > 0)) && (
+                              <div className="grid grid-cols-2 gap-1.5 px-2.5 pb-2">
+                                {player.damage !== undefined && (
+                                  <PStatCell
+                                    label="Damage"
+                                    value={String(player.damage)}
+                                    icon={<Flame className="w-3 h-3 text-orange-400" />}
+                                    bg="bg-orange-500/10"
+                                    text="text-orange-300"
+                                  />
+                                )}
+                                {player.coinsEarned !== undefined && player.coinsEarned > 0 ? (
+                                  <PStatCell
+                                    label="Earned"
+                                    value={`+${formatRupees(player.coinsEarned)}`}
+                                    icon={<Coins className="w-3 h-3 text-green-400" />}
+                                    bg="bg-green-500/10"
+                                    text="text-green-300"
+                                  />
+                                ) : (
+                                  <PStatCell
+                                    label="Earned"
+                                    value="-"
+                                    bg="bg-[oklch(0.20,0.04,290)]"
+                                    text="text-[oklch(0.40,0.04,290)]"
+                                  />
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -611,43 +652,6 @@ export default function TournamentDetailPage() {
             <Trophy className="w-10 h-10 text-[oklch(0.30,0.04,290)]" />
             <p className="text-xs text-[oklch(0.40,0.04,290)]">Tournament not found</p>
             <Link href="/tournaments" className="text-xs text-blue-400 hover:underline">Go back</Link>
-          </div>
-        )}
-
-        {/* Toggle Log */}
-        {logs.length > 0 && (
-          <button onClick={() => setShowLog(!showLog)}
-            className="w-full flex items-center justify-between rounded-xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.28,0.05,290)] p-3">
-            <div className="flex items-center gap-2">
-              <Terminal className="w-4 h-4 text-yellow-400" />
-              <span className="text-sm font-bold text-yellow-400">Activity Log</span>
-              {refreshing && <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse ml-1" />}
-            </div>
-            <span className="text-[11px] text-[oklch(0.50,0.04,290)]">{showLog ? 'HIDE' : 'SHOW'} ({logs.length})</span>
-          </button>
-        )}
-
-        {/* Log Viewer */}
-        {showLog && logs.length > 0 && (
-          <div className="rounded-2xl bg-[oklch(0.12,0.02,290)] border border-[oklch(0.28,0.05,290)] overflow-hidden">
-            <div className="flex items-center justify-between px-3.5 py-2.5 bg-[oklch(0.10,0.02,290)] border-b border-[oklch(0.25,0.05,290)]">
-              <span className="text-[11px] font-semibold text-[oklch(0.70,0.04,290)]">Logcat</span>
-              <button onClick={handleClearLog}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-red-500 to-orange-500 text-white text-[11px] font-bold shadow-lg shadow-red-500/20 active:scale-95 transition-transform">
-                <Trash2 className="w-3 h-3" /> CLEAR
-              </button>
-            </div>
-            <div className="p-3 h-[300px] lg:h-[400px] overflow-y-auto scrollbar-none">
-              <div className="space-y-0.5">
-                {logs.map((log, i) => (
-                  <p key={i} className={`text-[11px] font-mono leading-relaxed ${getLogColor(log.type)}`}>
-                    [{log.time}] {log.message}
-                  </p>
-                ))}
-                {refreshing && <span className="inline-block w-1.5 h-3 bg-yellow-400 animate-pulse ml-1" />}
-              </div>
-              <div ref={logEndRef} />
-            </div>
           </div>
         )}
       </div>

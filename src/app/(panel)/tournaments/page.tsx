@@ -14,6 +14,8 @@ import {
   ChevronRight,
   RefreshCw,
   Zap,
+  Gamepad2,
+  Map,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { fetchRemoteConfig, getRemoteString, RC_KEYS } from '@/lib/remoteConfig';
@@ -58,11 +60,11 @@ function formatTimeAgo(createdAt: string): string {
     const diffDays = Math.floor(diffMs / 86400000);
 
     if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins} min ago`;
-    if (diffHours < 24) return `${diffHours} hrs ago`;
-    if (diffDays < 7) return `${diffDays} days ago`;
-    if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
-    return `${Math.floor(diffDays / 30)} months ago`;
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
+    return `${Math.floor(diffDays / 30)}mo ago`;
   } catch {
     return createdAt;
   }
@@ -73,18 +75,18 @@ function formatTimeAgo(createdAt: string): string {
 // ═══════════════════════════════════════════════════
 interface TournamentItem {
   tournamentId: string;
-  tournamentType: string;
+  tournamentType: string;   // RTDB: Mode field (BattleRoyal, ClashSquad, LoneWolf, FreeTournaments)
   title: string;
   status: string;
-  joiningFee: number;
-  pricePool: number;
-  joinedCount: number;
-  maxSlots: number;
-  dateTime: string;
-  createdAt: string;
-  mode: string;
-  map: string;
-  perKill: number;
+  joiningFee: number;       // RTDB: JoiningFee (paisa)
+  pricePool: number;        // RTDB: PricePool (paisa)
+  joinedCount: number;      // RTDB: JoinedPlayersCount
+  maxSlots: number;         // RTDB: SlotNumbers
+  dateTime: string;         // RTDB: DateTime
+  createdAt: string;        // RTDB: CreatedAt
+  gameType: string;         // RTDB: Type field (Solo, Duo, Squad)
+  map: string;              // RTDB: Map
+  perKill: number;          // RTDB: PerKill (paisa)
 }
 
 // ═══════════════════════════════════════════════════
@@ -131,6 +133,28 @@ const tabToType: Record<string, string> = {
   'Free': 'FreeTournaments',
   'Lone Wolf': 'LoneWolf',
 };
+
+// ═══════════════════════════════════════════════════
+// STAT CELL — Gaming style stat box for list items
+// ═══════════════════════════════════════════════════
+function StatCell({ label, value, valueColor = 'text-white', icon }: {
+  label: string;
+  value: string;
+  valueColor?: string;
+  icon?: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-lg bg-[oklch(0.22,0.04,290)] px-2.5 py-2">
+      <p className="text-[9px] font-medium text-[oklch(0.45,0.04,290)] uppercase tracking-wide mb-0.5">
+        {label}
+      </p>
+      <div className="flex items-center gap-1">
+        {icon}
+        <p className={`text-xs font-bold ${valueColor} leading-tight truncate`}>{value}</p>
+      </div>
+    </div>
+  );
+}
 
 // ═══════════════════════════════════════════════════
 // MAIN COMPONENT
@@ -192,7 +216,7 @@ export default function TournamentsPage() {
         return;
       }
 
-      // Group by type
+      // Group by tournament type
       const grouped: Record<string, string[]> = {};
       snap.forEach((doc) => {
         const d = doc.data();
@@ -209,26 +233,27 @@ export default function TournamentsPage() {
 
       for (const type of Object.keys(grouped)) {
         try {
-          const metaPath = `Tournaments/TournamentMeta/${type}`;
-          const data = await rtdbGet(metaPath);
+          const metaPathStr = `Tournaments/TournamentMeta/${type}`;
+          const data = await rtdbGet(metaPathStr);
 
           if (!data || typeof data !== 'object') continue;
 
           const ids = grouped[type];
 
-          for (const [id, meta] of Object.entries(data)) {
-            if (!ids.includes(id)) continue;
+          for (const [tId, meta] of Object.entries(data)) {
+            if (!ids.includes(tId)) continue;
 
             const m = meta as Record<string, any>;
+            // RTDB field mapping: Mode=tournamentType, Type=gameType(Solo/Duo/Squad)
             const feePaisa = m.JoiningFee || 0;
             const poolPaisa = m.PricePool || 0;
             const joined = m.JoinedPlayersCount || 0;
             const maxSlots = m.SlotNumbers || 0;
 
             allTournaments.push({
-              tournamentId: id,
+              tournamentId: tId,
               tournamentType: type,
-              title: m.Title || id,
+              title: m.Title || tId,
               status: m.Status || 'Unknown',
               joiningFee: feePaisa,
               pricePool: poolPaisa,
@@ -236,7 +261,7 @@ export default function TournamentsPage() {
               maxSlots,
               dateTime: m.DateTime || '',
               createdAt: m.CreatedAt || '',
-              mode: m.Type || '',
+              gameType: m.Type || '',       // RTDB Type field = Solo/Duo/Squad
               map: m.Map || '',
               perKill: m.PerKill || 0,
             });
@@ -378,104 +403,119 @@ export default function TournamentsPage() {
 
                 return (
                   <Link key={`${tour.tournamentType}-${tour.tournamentId}`} href={`/tournaments/${tour.tournamentId}?type=${tour.tournamentType}`}>
-                    <div className="p-4 rounded-xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.25,0.05,290)] hover:border-[oklch(0.35,0.06,290)] transition-colors active:scale-[0.99] cursor-pointer">
+                    <div className="rounded-xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.25,0.05,290)] hover:border-[oklch(0.35,0.06,290)] transition-colors active:scale-[0.99] cursor-pointer overflow-hidden">
 
-                      {/* Row 1 — Type Badge + Status + Arrow */}
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold shrink-0 ${tc.text}`}>
-                            {tc.icon}
-                            {tc.label}
-                          </span>
-                          <span className="text-[10px] font-mono text-[oklch(0.50,0.04,290)] truncate">
-                            {tour.tournamentId}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0 ml-2">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${sc}`}>
-                            {tour.status}
-                          </span>
-                          <ChevronRight className="w-4 h-4 text-[oklch(0.30,0.04,290)]" />
-                        </div>
-                      </div>
+                      {/* Top Accent Line */}
+                      <div className={`h-0.5 bg-gradient-to-r ${tc.bg}`} />
 
-                      {/* Row 2 — Title */}
-                      {tour.title && tour.title !== tour.tournamentId && (
-                        <p className="text-sm font-semibold text-white mb-2.5 leading-snug">{tour.title}</p>
-                      )}
+                      <div className="p-3 lg:p-3.5">
 
-                      {/* Row 3 — Info: Fee | Prize | Schedule (responsive wrap) */}
-                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 mb-2.5">
-                        <div className="flex items-center gap-1.5">
-                          <Coins className="w-3.5 h-3.5 text-yellow-400 shrink-0" />
-                          <span className="text-xs text-[oklch(0.50,0.04,290)]">Entry:</span>
-                          <span className="text-xs font-bold text-white">{formatRupees(tour.joiningFee)}</span>
-                        </div>
-
-                        <div className="flex items-center gap-1.5">
-                          <Trophy className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-                          <span className="text-xs text-[oklch(0.50,0.04,290)]">Prize:</span>
-                          <span className="text-xs font-bold text-white">{formatRupees(tour.pricePool)}</span>
-                        </div>
-
-                        <div className="flex items-center gap-1.5">
-                          <Clock className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-                          <span className="text-xs font-semibold text-white">{tour.dateTime || 'N/A'}</span>
-                        </div>
-                      </div>
-
-                      {/* Row 4 — Tags: Map + Mode + PerKill */}
-                      {(tour.map || tour.mode || tour.perKill > 0) && (
-                        <div className="flex flex-wrap items-center gap-1.5 mb-2.5">
-                          {tour.map && (
-                            <span className="px-2 py-0.5 rounded-md bg-[oklch(0.22,0.04,290)] text-[10px] text-[oklch(0.55,0.04,290)] font-medium">
-                              {tour.map}
+                        {/* Row 1 — Type Badge + ID + Status + Arrow */}
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold shrink-0 ${tc.text}`}>
+                              {tc.icon}
+                              {tc.label}
                             </span>
-                          )}
-                          {tour.mode && (
-                            <span className="px-2 py-0.5 rounded-md bg-[oklch(0.22,0.04,290)] text-[10px] text-[oklch(0.55,0.04,290)] font-medium">
-                              {tour.mode}
+                            <span className="text-[10px] font-mono text-[oklch(0.50,0.04,290)] truncate">
+                              {tour.tournamentId}
                             </span>
-                          )}
-                          {tour.perKill > 0 && (
-                            <span className="px-2 py-0.5 rounded-md bg-[oklch(0.22,0.04,290)] text-[10px] text-[oklch(0.55,0.04,290)] font-medium">
-                              Per Kill: {formatRupees(tour.perKill)}
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0 ml-2">
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${sc}`}>
+                              {tour.status}
                             </span>
-                          )}
+                            <ChevronRight className="w-4 h-4 text-[oklch(0.30,0.04,290)]" />
+                          </div>
                         </div>
-                      )}
 
-                      {/* Row 5 — Players Progress + Time */}
-                      <div className="flex items-center gap-3">
-                        {!isCompleted ? (
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between mb-1">
+                        {/* Row 2 — Title */}
+                        {tour.title && tour.title !== tour.tournamentId && (
+                          <p className="text-sm font-bold text-white mb-2.5 leading-snug">{tour.title}</p>
+                        )}
+
+                        {/* Row 3 — Stat Grid (2x2 gaming style) */}
+                        <div className="grid grid-cols-2 gap-1.5 mb-2.5">
+                          <StatCell
+                            label="Entry Fee"
+                            value={formatRupees(tour.joiningFee)}
+                            valueColor="text-yellow-400"
+                            icon={<Coins className="w-3 h-3 text-yellow-400" />}
+                          />
+                          <StatCell
+                            label="Prize Pool"
+                            value={formatRupees(tour.pricePool)}
+                            valueColor="text-purple-400"
+                            icon={<Trophy className="w-3 h-3 text-purple-400" />}
+                          />
+                          <StatCell
+                            label="Map"
+                            value={tour.map || 'N/A'}
+                            valueColor="text-cyan-300"
+                            icon={<Map className="w-3 h-3 text-cyan-400" />}
+                          />
+                          <StatCell
+                            label="Type"
+                            value={tour.gameType || 'N/A'}
+                            valueColor="text-emerald-300"
+                            icon={<Gamepad2 className="w-3 h-3 text-emerald-400" />}
+                          />
+                        </div>
+
+                        {/* Row 4 — Per Kill + DateTime */}
+                        {(tour.perKill > 0 || tour.dateTime) && (
+                          <div className="flex items-center justify-between mb-2.5 px-1">
+                            {tour.perKill > 0 && (
                               <div className="flex items-center gap-1">
-                                <Users className="w-3 h-3 text-[oklch(0.45,0.04,290)]" />
-                                <span className="text-[10px] text-[oklch(0.55,0.04,290)]">
-                                  {tour.joinedCount}/{tour.maxSlots} Joined
+                                <Target className="w-3 h-3 text-red-400" />
+                                <span className="text-[11px] font-semibold text-red-400">
+                                  Per Kill: {formatRupees(tour.perKill)}
                                 </span>
                               </div>
-                              <span className="text-[10px] font-bold text-white">{progressPercent}%</span>
-                            </div>
-                            <div className="h-1.5 rounded-full bg-[oklch(0.25,0.05,290)] overflow-hidden">
-                              <div
-                                className="h-full rounded-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-all duration-500"
-                                style={{ width: `${progressPercent}%` }}
-                              />
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="flex-1 flex items-center gap-1">
-                            <Users className="w-3 h-3 text-[oklch(0.45,0.04,290)]" />
-                            <span className="text-[10px] text-[oklch(0.55,0.04,290)]">
-                              {tour.joinedCount}/{tour.maxSlots} Played
-                            </span>
+                            )}
+                            {tour.dateTime && (
+                              <div className="flex items-center gap-1">
+                                <Clock className="w-3 h-3 text-blue-400" />
+                                <span className="text-[11px] font-semibold text-blue-300">
+                                  {tour.dateTime}
+                                </span>
+                              </div>
+                            )}
                           </div>
                         )}
-                        <span className="text-[10px] text-[oklch(0.35,0.04,290)] shrink-0">
-                          {formatTimeAgo(tour.createdAt)}
-                        </span>
+
+                        {/* Row 5 — Players Progress + Time Ago */}
+                        <div className="flex items-center gap-3">
+                          {!isCompleted ? (
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center justify-between mb-1">
+                                <div className="flex items-center gap-1">
+                                  <Users className="w-3 h-3 text-[oklch(0.45,0.04,290)]" />
+                                  <span className="text-[10px] text-[oklch(0.55,0.04,290)]">
+                                    {tour.joinedCount}/{tour.maxSlots} Joined
+                                  </span>
+                                </div>
+                                <span className="text-[10px] font-bold text-white">{progressPercent}%</span>
+                              </div>
+                              <div className="h-1.5 rounded-full bg-[oklch(0.25,0.05,290)] overflow-hidden">
+                                <div
+                                  className="h-full rounded-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-all duration-500"
+                                  style={{ width: `${progressPercent}%` }}
+                                />
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex-1 flex items-center gap-1">
+                              <Users className="w-3 h-3 text-[oklch(0.45,0.04,290)]" />
+                              <span className="text-[10px] text-[oklch(0.55,0.04,290)]">
+                                {tour.joinedCount}/{tour.maxSlots} Played
+                              </span>
+                            </div>
+                          )}
+                          <span className="text-[10px] text-[oklch(0.35,0.04,290)] shrink-0">
+                            {formatTimeAgo(tour.createdAt)}
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </Link>
