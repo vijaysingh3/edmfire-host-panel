@@ -37,12 +37,11 @@ import { db } from '@/lib/firebase';
 // TYPES
 // ═══════════════════════════════════════════════════
 interface TransactionItem {
-  id: string;                       // document ID (transactionId or UTR)
-  timestamp?: string;                // "16 May 2026, 3:30 PM"
-  transactionType?: string;          // "Tournament Joining" | "Tournament Refund" | "Prize Distribution" | "Refund Processed" | "Withdrawal" | "Deposit"
-  transactionId?: string;            // "TJ2456987965" | "RFD_xxx" | "EDM118PRDxxx" | "EDM118RFDxxx"
-  amount?: number;                   // PAISA (positive for credit, negative for debit in some)
-  paymentStatus?: string;            // "completed" | "pending" | "failed"
+  id: string;                       // document ID
+  timestamp?: string;               // "16 May 2026, 3:30 PM"
+  transactionType?: string;          // "credit" | "debit"
+  transactionId?: string;            // "TJ2456987965" | "EDM118PRDxxx" | "EDM118RFDxxx"
+  amount?: number;                   // PAISA (always positive, sign determined by transactionType)
   status?: string;                   // "success" | "completed" | "pending" | "failed"
   description?: string;
   tournamentId?: string;
@@ -55,25 +54,22 @@ interface TransactionItem {
   referralBonusUsed?: number;
   refundPercent?: number;
   walletBalanceAfter?: number;
-  category?: string;                 // "entryFee" | "prize" | "refund" | "withdrawal" | "deposit"
-  transactionType_display?: string;  // "credit" | "debit"
+  category?: string;                 // "entryFee" | "priceDistribution" | "refund"
+  paymentStatus?: string;
   upiId?: string;
-  amountCoins?: number;
   processedAt?: any;
   // Raw data for detail view
   _raw?: Record<string, any>;
 }
 
 // ═══════════════════════════════════════════════════
-// FILTER TABS
+// FILTER TABS — Only 3 active types (no deposit/withdrawal yet)
 // ═══════════════════════════════════════════════════
 const filterTabs = [
   { key: 'all', label: 'All' },
   { key: 'entry_fee', label: 'Entry Fee' },
-  { key: 'prize', label: 'Prize' },
+  { key: 'prize', label: 'Prize Dist.' },
   { key: 'refund', label: 'Refund' },
-  { key: 'withdrawal', label: 'Withdrawal' },
-  { key: 'deposit', label: 'Deposit' },
 ];
 
 // ═══════════════════════════════════════════════════
@@ -84,36 +80,51 @@ function formatCoins(paisa: number): string {
   return coins % 1 === 0 ? `${Math.round(coins)} Coins` : `${parseFloat(coins.toFixed(2))} Coins`;
 }
 
+// ── Category Detection — Matches Firestore data from 3 functions ──
+// entryFee (joining)   → category: "entryFee",      transactionType: "credit"
+// priceDistribution    → category: "priceDistribution", transactionType: "debit"
+// refund               → category: "refund",         transactionType: "debit"
 function getTransactionCategory(doc: Record<string, any>): string {
-  const type = doc.transactionType || '';
-  const category = doc.category || '';
-  if (category === 'entryFee') return 'entry_fee';
-  if (category === 'prize') return 'prize';
-  if (type.includes('Refund') || type.includes('refund')) return 'refund';
-  if (type.includes('Withdrawal') || type.includes('withdrawal')) return 'withdrawal';
-  if (type.includes('Deposit') || type.includes('deposit')) return 'deposit';
-  if (type.includes('Joining') || type.includes('joining')) return 'entry_fee';
-  if (type.includes('Prize') || type.includes('prize') || type.includes('Distribution')) return 'prize';
+  const category = (doc.category || '').toLowerCase();
+  const txnType = (doc.transactionType || '').toLowerCase();
+
+  // Direct category match (most reliable)
+  if (category === 'entryfee') return 'entry_fee';
+  if (category === 'prizedistribution') return 'prize';
+  if (category === 'refund') return 'refund';
+
+  // Fallback: infer from transactionType
+  if (txnType === 'credit') return 'entry_fee';
+  if (txnType === 'debit') {
+    // Debit could be prize or refund — check for clues
+    if ((doc.tournamentId || '').includes('RFD')) return 'refund';
+    if (doc.refundPercent !== undefined) return 'refund';
+    if (doc.playerName && doc.playerUid) return 'entry_fee'; // entry fee has both
+    return 'prize'; // default debit → prize distribution
+  }
+
+  // Legacy fallback from old format strings
+  if (txnType.includes('refund')) return 'refund';
+  if (txnType.includes('joining')) return 'entry_fee';
+  if (txnType.includes('prize') || txnType.includes('distribution')) return 'prize';
+
   return 'other';
 }
 
+// ── Credit/Debit — Based on transactionType field ──
 function isCredit(txn: TransactionItem): boolean {
   const raw = txn._raw || {};
-  if (raw.transactionType_display === 'credit') return true;
-  if (raw.transactionType_display === 'debit') return false;
+  if (raw.transactionType === 'credit') return true;
+  if (raw.transactionType === 'debit') return false;
+
+  // Fallback: infer from category
   const cat = getTransactionCategory(raw);
   if (cat === 'entry_fee') return true;
-  if (cat === 'prize') return false;      // Prize distribution = debit (host pays)
-  if (cat === 'refund') return false;      // Refund processed = debit (host pays)
-  if (cat === 'withdrawal') return false;
-  if (cat === 'deposit') return true;
-  return true;
+  return false; // prize, refund, all debits
 }
 
 function getTxnIcon(txn: TransactionItem): { icon: React.ReactNode; bg: string } {
-  const raw = txn._raw || {};
-  const type = raw.transactionType || '';
-  const cat = getTransactionCategory(raw);
+  const cat = getTransactionCategory(txn._raw || {});
 
   switch (cat) {
     case 'entry_fee':
@@ -122,10 +133,6 @@ function getTxnIcon(txn: TransactionItem): { icon: React.ReactNode; bg: string }
       return { icon: <Gift className="w-5 h-5" />, bg: 'bg-purple-500/15 text-purple-400' };
     case 'refund':
       return { icon: <RotateCcw className="w-5 h-5" />, bg: 'bg-orange-500/15 text-orange-400' };
-    case 'withdrawal':
-      return { icon: <Upload className="w-5 h-5" />, bg: 'bg-yellow-500/15 text-yellow-400' };
-    case 'deposit':
-      return { icon: <Download className="w-5 h-5" />, bg: 'bg-cyan-500/15 text-cyan-400' };
     default:
       return { icon: <Wallet className="w-5 h-5" />, bg: 'bg-[oklch(0.22,0.04,290)] text-[oklch(0.55,0.04,290)]' };
   }
@@ -139,15 +146,11 @@ function getTxnTitle(txn: TransactionItem): string {
     case 'entry_fee':
       return raw.playerName ? `Entry Fee: ${raw.playerName}` : 'Entry Fee Received';
     case 'prize':
-      return raw.playerName ? `Prize: ${raw.playerName}` : 'Prize Distribution';
+      return 'Prize Distribution';
     case 'refund':
       return raw.playerName ? `Refund: ${raw.playerName}` : 'Refund Processed';
-    case 'withdrawal':
-      return 'Withdrawal';
-    case 'deposit':
-      return 'Deposit';
     default:
-      return raw.transactionType || 'Transaction';
+      return 'Transaction';
   }
 }
 
@@ -157,15 +160,13 @@ function getTxnSubtitle(txn: TransactionItem): string {
 
   switch (cat) {
     case 'entry_fee':
-      return raw.playerUid ? `UID: ${raw.playerUid}` : (raw.description || '');
+      return raw.playerUid ? `UID: ${raw.playerUid}` : (raw.tournamentId ? `Tournament: ${raw.tournamentId}` : 'Tournament Joining');
     case 'prize':
-      return raw.playerName ? `Tournament: ${raw.tournamentId || 'N/A'}` : (raw.description || '');
+      return raw.tournamentId ? `Tournament: ${raw.tournamentId}` : 'Winners Paid';
     case 'refund':
-      return raw.userId ? `User: ${raw.userId}` : (raw.description || '');
-    case 'withdrawal':
-      return raw.upiId || (raw.description || '');
-    case 'deposit':
-      return raw.description || 'Wallet Top-up';
+      if (raw.playerName && raw.tournamentId) return `${raw.playerName} — ${raw.tournamentId}`;
+      if (raw.playerName) return raw.playerName;
+      return raw.tournamentId ? `Tournament: ${raw.tournamentId}` : 'Player Refund';
     default:
       return raw.description || '';
   }
@@ -173,8 +174,7 @@ function getTxnSubtitle(txn: TransactionItem): string {
 
 function getTxnMeta(txn: TransactionItem): string {
   const raw = txn._raw || {};
-  if (raw.tournamentId) return `Tournament: ${raw.tournamentId}`;
-  if (raw.tournamentType) return `Type: ${raw.tournamentType}`;
+  if (raw.tournamentId) return `#${raw.tournamentId}`;
   return '';
 }
 
@@ -231,9 +231,7 @@ export default function WalletPage() {
           refundPercent: data.refundPercent || 0,
           walletBalanceAfter: data.walletBalanceAfter || 0,
           category: data.category || '',
-          transactionType_display: data.transactionType_display || '',
           upiId: data.upiId || '',
-          amountCoins: data.amountCoins || 0,
           processedAt: data.processedAt,
         });
       });
@@ -271,18 +269,17 @@ export default function WalletPage() {
     });
   }, [transactions, activeTab]);
 
-  // ── Stats ──
+  // ── Stats — Only 3 active categories ──
   const stats = useMemo(() => {
-    let totalEntry = 0, totalPrize = 0, totalRefund = 0, totalWithdrawal = 0;
+    let totalEntry = 0, totalPrize = 0, totalRefund = 0;
     transactions.forEach((t) => {
       const amt = t.amount || 0;
       const cat = getTransactionCategory(t._raw || {});
       if (cat === 'entry_fee') totalEntry += amt;
       else if (cat === 'prize') totalPrize += amt;
       else if (cat === 'refund') totalRefund += amt;
-      else if (cat === 'withdrawal') totalWithdrawal += amt;
     });
-    return { totalEntry, totalPrize, totalRefund, totalWithdrawal };
+    return { totalEntry, totalPrize, totalRefund };
   }, [transactions]);
 
   // ═══════════════════════════════════════════════════
@@ -295,6 +292,14 @@ export default function WalletPage() {
     const st = statusConfig[statusKey];
     const txnIcon = getTxnIcon(selectedTxn);
     const category = getTransactionCategory(raw);
+
+    // Category display labels
+    const categoryLabels: Record<string, string> = {
+      entry_fee: 'Entry Fee',
+      prize: 'Prize Distribution',
+      refund: 'Refund',
+      other: 'Other',
+    };
 
     return (
       <div className="min-h-screen pb-20 lg:pb-6">
@@ -338,19 +343,17 @@ export default function WalletPage() {
 
             {[
               { label: 'Transaction ID', value: selectedTxn.transactionId || selectedTxn.id },
-              { label: 'Type', value: selectedTxn.transactionType || raw.category || category },
+              { label: 'Type', value: raw.transactionType === 'credit' ? 'Credit (+)' : 'Debit (-)' },
+              { label: 'Category', value: categoryLabels[category] || category || 'N/A' },
+              { label: 'Amount', value: `${credit ? '+' : '-'}${formatCoins(selectedTxn.amount || 0)}` },
               { label: 'Timestamp', value: selectedTxn.timestamp || 'N/A' },
-              { label: 'Description', value: selectedTxn.description || 'N/A' },
               ...(selectedTxn.tournamentId ? [{ label: 'Tournament ID', value: selectedTxn.tournamentId }] : []),
-              ...(selectedTxn.tournamentType ? [{ label: 'Tournament Type', value: selectedTxn.tournamentType }] : []),
               ...(raw.playerName ? [{ label: 'Player Name', value: raw.playerName }] : []),
               ...(raw.playerUid ? [{ label: 'Player UID', value: String(raw.playerUid) }] : []),
               ...(raw.userId ? [{ label: 'User ID', value: raw.userId }] : []),
-              ...(selectedTxn.slotNumber ? [{ label: 'Slot Number', value: String(selectedTxn.slotNumber) }] : []),
-              ...(selectedTxn.referralBonusUsed ? [{ label: 'Referral Bonus Used', value: formatCoins(selectedTxn.referralBonusUsed) }] : []),
               ...(selectedTxn.refundPercent ? [{ label: 'Refund Percent', value: `${selectedTxn.refundPercent}%` }] : []),
               ...(selectedTxn.walletBalanceAfter ? [{ label: 'Wallet After', value: formatCoins(selectedTxn.walletBalanceAfter) }] : []),
-              ...(raw.upiId ? [{ label: 'UPI ID', value: raw.upiId }] : []),
+              ...(selectedTxn.description ? [{ label: 'Description', value: selectedTxn.description }] : []),
             ].filter(Boolean).map((row) => (
               <div key={row.label} className="flex items-center justify-between px-4 py-3 border-b border-[oklch(0.22,0.04,290)] last:border-b-0">
                 <p className="text-xs text-[oklch(0.50,0.04,290)]">{row.label}</p>
@@ -422,14 +425,13 @@ export default function WalletPage() {
           </div>
         </div>
 
-        {/* Stats */}
+        {/* Stats — Only 3 active categories */}
         <div className="rounded-2xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.30,0.06,290)] p-3">
           <div className="flex gap-2 overflow-x-auto scrollbar-none">
             {[
               { label: 'Entry Fees', amount: `+${formatCoins(stats.totalEntry)}`, color: 'text-green-400', icon: ArrowDownLeft },
               { label: 'Prize Paid', amount: `-${formatCoins(stats.totalPrize)}`, color: 'text-purple-400', icon: Gift },
               { label: 'Refunded', amount: `-${formatCoins(stats.totalRefund)}`, color: 'text-orange-400', icon: TrendingDown },
-              { label: 'Withdrawn', amount: `-${formatCoins(stats.totalWithdrawal)}`, color: 'text-yellow-400', icon: ArrowUpRight },
             ].map((stat) => (
               <div key={stat.label}
                 className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[oklch(0.22,0.04,290)] border border-[oklch(0.28,0.05,290)] shrink-0 min-w-[120px]">
@@ -451,7 +453,7 @@ export default function WalletPage() {
           <p className="text-[11px] text-[oklch(0.45,0.04,290)] mt-0.5">{transactions.length} total transactions</p>
         </div>
 
-        {/* Filter Tabs */}
+        {/* Filter Tabs — Only 3 active types */}
         <div className="rounded-2xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.30,0.06,290)] p-3">
           <div className="flex gap-2 overflow-x-auto scrollbar-none">
             {filterTabs.map((tab) => (
@@ -488,6 +490,7 @@ export default function WalletPage() {
                 const txnIcon = getTxnIcon(txn);
                 const statusKey = (txn.paymentStatus || txn.status || '').toLowerCase();
                 const st = statusConfig[statusKey];
+                const cat = getTransactionCategory(txn._raw || {});
 
                 return (
                   <button key={txn.id} onClick={() => setSelectedTxn(txn)}
