@@ -22,7 +22,7 @@ import {
   Award,
   Clock,
   Gamepad2,
-  Timer,
+  X,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { fetchRemoteConfig, getRemoteString, RC_KEYS } from '@/lib/remoteConfig';
@@ -68,15 +68,14 @@ interface PlayerData {
   positionSeat: number;
   joinTime: number;
   paymentStatus: boolean;
-  joiningFee: number;     // PAISA
-  finalAmount: number;    // PAISA
+  joiningFee: number;
+  finalAmount: number;
   referralBonusUsed: number;
-  // After results
   kills?: number;
   deaths?: number;
   damage?: number;
   rank?: number;
-  coinsEarned?: number;   // PAISA
+  coinsEarned?: number;
   assists?: number;
 }
 
@@ -89,8 +88,8 @@ interface TournamentMeta {
   joinedCount: number;
   maxSlots: number;
   dateTime: string;
-  mode: string;           // RTDB Mode field (BattleRoyal, ClashSquad, etc.)
-  type: string;           // RTDB Type field (Solo, Duo, Squad)
+  mode: string;
+  type: string;
   map: string;
   bannerUrl: string;
   createdAt: string;
@@ -124,9 +123,9 @@ const statusColors: Record<string, string> = {
 };
 
 // ═══════════════════════════════════════════════════
-// PLAYER STAT CELL — Gaming style mini card
+// POPUP STAT — Gaming style cell for full detail popup
 // ═══════════════════════════════════════════════════
-function PStatCell({ label, value, icon, bg, text }: {
+function PopStat({ label, value, icon, bg, text }: {
   label: string;
   value: string;
   icon?: React.ReactNode;
@@ -134,11 +133,207 @@ function PStatCell({ label, value, icon, bg, text }: {
   text?: string;
 }) {
   return (
-    <div className={`rounded-lg px-2 py-1.5 ${bg || 'bg-[oklch(0.22,0.04,290)]'}`}>
-      <p className="text-[8px] font-bold uppercase tracking-wider opacity-60 mb-0.5">{label}</p>
-      <div className="flex items-center gap-1">
+    <div className={`rounded-lg px-3 py-2.5 ${bg || 'bg-[oklch(0.22,0.04,290)]'}`}>
+      <p className="text-[9px] font-bold uppercase tracking-wider opacity-50 mb-0.5">{label}</p>
+      <div className="flex items-center gap-1.5">
         {icon && <span className="shrink-0">{icon}</span>}
-        <p className={`text-xs font-bold leading-tight ${text || 'text-white'}`}>{value}</p>
+        <p className={`text-sm font-bold leading-tight ${text || 'text-white'}`}>{value}</p>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════
+// PLAYER FULL DETAIL POPUP
+// ═══════════════════════════════════════════════════
+function PlayerPopup({ player, onClose }: { player: PlayerData; onClose: () => void }) {
+  if (!player) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end lg:items-center justify-center"
+      onClick={onClose}
+    >
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+
+      {/* Popup Card — slides up on phone, centered on PC */}
+      <div
+        className="relative w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-t-2xl lg:rounded-2xl bg-[oklch(0.16,0.04,290)] border border-[oklch(0.30,0.06,290)] shadow-2xl shadow-black/40"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Popup Header */}
+        <div className="sticky top-0 z-10 bg-gradient-to-r from-purple-600 to-fuchsia-700 px-4 py-4 rounded-t-2xl lg:rounded-t-2xl">
+          <button
+            onClick={onClose}
+            className="absolute top-3 right-3 w-8 h-8 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center transition-colors"
+          >
+            <X className="w-4 h-4 text-white" />
+          </button>
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center text-white text-lg font-bold shrink-0">
+              {player.inGameName ? player.inGameName.charAt(0).toUpperCase() : '?'}
+            </div>
+            <div className="min-w-0">
+              <p className="text-lg font-bold text-white truncate leading-tight">
+                {player.inGameName || 'Unknown'}
+              </p>
+              <p className="text-xs text-white/70 font-mono mt-0.5">
+                UID: {player.inGameUID || '-'}
+              </p>
+            </div>
+            <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold border shrink-0 ml-auto ${
+              player.paymentStatus
+                ? 'border-green-400/40 text-green-200 bg-green-500/20'
+                : 'border-yellow-400/40 text-yellow-200 bg-yellow-500/20'
+            }`}>
+              {player.paymentStatus ? <ShieldCheck className="w-3.5 h-3.5" /> : <CircleDot className="w-3.5 h-3.5" />}
+              {player.paymentStatus ? 'Paid' : 'Unpaid'}
+            </span>
+          </div>
+        </div>
+
+        {/* Popup Body */}
+        <div className="p-4 space-y-4">
+
+          {/* Basic Info */}
+          <div>
+            <p className="text-[10px] font-bold text-[oklch(0.45,0.04,290)] uppercase tracking-wider mb-2">Basic Info</p>
+            <div className="grid grid-cols-3 gap-2">
+              <PopStat
+                label="Seat"
+                value={String(player.positionSeat || '-')}
+                icon={<Target className="w-3.5 h-3.5 text-cyan-400" />}
+                bg="bg-cyan-500/10"
+                text="text-cyan-300"
+              />
+              <PopStat
+                label="Level"
+                value={String(player.inGameLevel || '-')}
+                icon={<Shield className="w-3.5 h-3.5 text-blue-400" />}
+                bg="bg-blue-500/10"
+                text="text-blue-300"
+              />
+              <PopStat
+                label="Joined"
+                value={player.joinTime > 0 ? formatJoinTime(player.joinTime) : '-'}
+                icon={<Clock className="w-3.5 h-3.5 text-[oklch(0.50,0.04,290)]" />}
+                bg="bg-[oklch(0.22,0.04,290)]"
+                text="text-[oklch(0.70,0.04,290)]"
+              />
+            </div>
+          </div>
+
+          {/* Payment Info */}
+          <div>
+            <p className="text-[10px] font-bold text-[oklch(0.45,0.04,290)] uppercase tracking-wider mb-2">Payment</p>
+            <div className="grid grid-cols-2 gap-2">
+              <PopStat
+                label="Entry Fee"
+                value={formatRupees(player.joiningFee)}
+                icon={<Coins className="w-3.5 h-3.5 text-yellow-400" />}
+                bg="bg-yellow-500/10"
+                text="text-yellow-300"
+              />
+              <PopStat
+                label="Amount Paid"
+                value={player.finalAmount > 0 ? formatRupees(player.finalAmount) : '-'}
+                icon={<Coins className="w-3.5 h-3.5 text-green-400" />}
+                bg="bg-green-500/10"
+                text="text-green-300"
+              />
+            </div>
+            {player.referralBonusUsed > 0 && (
+              <div className="mt-2">
+                <PopStat
+                  label="Referral Bonus Used"
+                  value={formatRupees(player.referralBonusUsed)}
+                  icon={<Coins className="w-3.5 h-3.5 text-purple-400" />}
+                  bg="bg-purple-500/10"
+                  text="text-purple-300"
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Match Results — Only if results exist */}
+          {(player.kills !== undefined || player.rank !== undefined || player.assists !== undefined || player.damage !== undefined) && (
+            <div>
+              <p className="text-[10px] font-bold text-[oklch(0.45,0.04,290)] uppercase tracking-wider mb-2">Match Results</p>
+              <div className="grid grid-cols-3 gap-2">
+                {player.rank !== undefined && (
+                  <PopStat
+                    label="Rank"
+                    value={`#${player.rank}`}
+                    icon={<Award className="w-3.5 h-3.5 text-amber-400" />}
+                    bg="bg-amber-500/10"
+                    text="text-amber-300"
+                  />
+                )}
+                {player.kills !== undefined && (
+                  <PopStat
+                    label="Kills"
+                    value={String(player.kills)}
+                    icon={<Skull className="w-3.5 h-3.5 text-red-400" />}
+                    bg="bg-red-500/10"
+                    text="text-red-300"
+                  />
+                )}
+                {player.assists !== undefined && (
+                  <PopStat
+                    label="Assists"
+                    value={String(player.assists)}
+                    icon={<Shield className="w-3.5 h-3.5 text-blue-400" />}
+                    bg="bg-blue-500/10"
+                    text="text-blue-300"
+                  />
+                )}
+              </div>
+              {(player.damage !== undefined || player.deaths !== undefined) && (
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                  {player.damage !== undefined && (
+                    <PopStat
+                      label="Damage"
+                      value={String(player.damage)}
+                      icon={<Flame className="w-3.5 h-3.5 text-orange-400" />}
+                      bg="bg-orange-500/10"
+                      text="text-orange-300"
+                    />
+                  )}
+                  {player.deaths !== undefined && (
+                    <PopStat
+                      label="Deaths"
+                      value={String(player.deaths)}
+                      icon={<Skull className="w-3.5 h-3.5 text-gray-400" />}
+                      bg="bg-gray-500/10"
+                      text="text-gray-300"
+                    />
+                  )}
+                </div>
+              )}
+              {player.coinsEarned !== undefined && (
+                <div className="mt-2">
+                  <PopStat
+                    label="Coins Earned"
+                    value={player.coinsEarned > 0 ? `+${formatRupees(player.coinsEarned)}` : '-'}
+                    icon={<Coins className="w-3.5 h-3.5 text-green-400" />}
+                    bg="bg-green-500/15"
+                    text="text-green-300"
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Transaction ID */}
+          {player.playerKey && (
+            <div className="pt-2 border-t border-[oklch(0.25,0.05,290)]">
+              <p className="text-[10px] text-[oklch(0.40,0.04,290)]">
+                Player Key: <span className="font-mono text-[oklch(0.55,0.04,290)]">{player.playerKey}</span>
+              </p>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -162,6 +357,9 @@ export default function TournamentDetailPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  // ── Popup State ──
+  const [selectedPlayer, setSelectedPlayer] = useState<PlayerData | null>(null);
+
   // ═══════════════════════════════════════════════════
   // LOAD TOURNAMENT DATA
   // ═══════════════════════════════════════════════════
@@ -183,7 +381,6 @@ export default function TournamentDetailPage() {
         rtdbGet(basePath(type, id)).catch(() => null),
       ]);
 
-      // Parse Meta — RTDB field mapping: Mode=tournamentMode, Type=gameType
       if (metaData && typeof metaData === 'object') {
         const m = metaData as Record<string, any>;
         setMeta({
@@ -195,8 +392,8 @@ export default function TournamentDetailPage() {
           joinedCount: m.JoinedPlayersCount || 0,
           maxSlots: m.SlotNumbers || 0,
           dateTime: m.DateTime || '',
-          mode: m.Mode || type,        // RTDB Mode = BattleRoyal/ClashSquad/LoneWolf
-          type: m.Type || '',          // RTDB Type = Solo/Duo/Squad
+          mode: m.Mode || type,
+          type: m.Type || '',
           map: m.Map || '',
           bannerUrl: m.BannerUrl || '',
           createdAt: m.CreatedAt || '',
@@ -205,7 +402,6 @@ export default function TournamentDetailPage() {
         toast.error('Tournament not found');
       }
 
-      // Parse Details
       if (detailData && typeof detailData === 'object') {
         const d = detailData as Record<string, any>;
         setDetails({
@@ -238,7 +434,7 @@ export default function TournamentDetailPage() {
   }, [authLoading, type, id]);
 
   // ═══════════════════════════════════════════════════
-  // PARSE JOINED PLAYERS — Handle both Array & Object format
+  // PARSE JOINED PLAYERS
   // ═══════════════════════════════════════════════════
   const parseJoinedPlayers = (raw: any) => {
     const list: PlayerData[] = [];
@@ -309,9 +505,6 @@ export default function TournamentDetailPage() {
     return arr;
   };
 
-  // Check if results are available
-  const hasResults = players.some((p) => p.kills !== undefined || p.rank !== undefined);
-
   const tc = typeConfig[type] || typeConfig.BattleRoyal;
 
   return (
@@ -375,7 +568,6 @@ export default function TournamentDetailPage() {
           <>
             {/* Tournament Info Cards */}
             <div className="grid grid-cols-2 gap-2">
-              {/* Entry Fee */}
               <div className="p-3 rounded-xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.30,0.06,290)]">
                 <p className="text-[10px] text-[oklch(0.45,0.04,290)]">Entry Fee</p>
                 <div className="flex items-center gap-1 mt-0.5">
@@ -384,19 +576,16 @@ export default function TournamentDetailPage() {
                 </div>
               </div>
 
-              {/* Room ID */}
               <div className="p-3 rounded-xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.30,0.06,290)]">
                 <p className="text-[10px] text-[oklch(0.45,0.04,290)]">Room ID</p>
                 <p className="text-sm font-bold text-white font-mono mt-0.5">{details.roomId || 'Not Set'}</p>
               </div>
 
-              {/* Room Password */}
               <div className="p-3 rounded-xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.30,0.06,290)]">
                 <p className="text-[10px] text-[oklch(0.45,0.04,290)]">Room Password</p>
                 <p className="text-sm font-bold text-white font-mono mt-0.5">{details.roomPassword || 'Not Set'}</p>
               </div>
 
-              {/* Per Kill */}
               {meta.perKill > 0 && (
                 <div className="p-3 rounded-xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.30,0.06,290)]">
                   <p className="text-[10px] text-[oklch(0.45,0.04,290)]">Per Kill</p>
@@ -407,7 +596,6 @@ export default function TournamentDetailPage() {
                 </div>
               )}
 
-              {/* Map */}
               {meta.map && (
                 <div className="p-3 rounded-xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.30,0.06,290)]">
                   <p className="text-[10px] text-[oklch(0.45,0.04,290)]">Map</p>
@@ -415,7 +603,6 @@ export default function TournamentDetailPage() {
                 </div>
               )}
 
-              {/* Payment Status */}
               <div className="p-3 rounded-xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.30,0.06,290)]">
                 <p className="text-[10px] text-[oklch(0.45,0.04,290)]">Payment</p>
                 <p className={`text-sm font-bold mt-0.5 ${details.paymentStatus ? 'text-green-400' : 'text-orange-400'}`}>
@@ -423,7 +610,6 @@ export default function TournamentDetailPage() {
                 </p>
               </div>
 
-              {/* Result Status */}
               <div className="p-3 rounded-xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.30,0.06,290)]">
                 <p className="text-[10px] text-[oklch(0.45,0.04,290)]">Result</p>
                 <p className={`text-sm font-bold mt-0.5 ${details.resultStatus ? 'text-green-400' : 'text-orange-400'}`}>
@@ -431,7 +617,6 @@ export default function TournamentDetailPage() {
                 </p>
               </div>
 
-              {/* Slot Numbers */}
               <div className="p-3 rounded-xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.30,0.06,290)]">
                 <p className="text-[10px] text-[oklch(0.45,0.04,290)]">Slots</p>
                 <div className="flex items-center gap-1 mt-0.5">
@@ -463,16 +648,19 @@ export default function TournamentDetailPage() {
               REFRESH
             </button>
 
-            {/* Players List */}
+            {/* ═══ Players List ═══ */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Users className="w-4 h-4 text-[oklch(0.60,0.04,290)]" />
                   <p className="text-sm font-semibold text-white">Joined Players</p>
                 </div>
-                <span className="text-xs text-[oklch(0.45,0.04,290)]">
-                  {players.length} players
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-[oklch(0.45,0.04,290)]">
+                    {players.length} players
+                  </span>
+                  <span className="text-[10px] text-[oklch(0.40,0.04,290)]">Tap for details</span>
+                </div>
               </div>
 
               {players.length === 0 ? (
@@ -481,165 +669,55 @@ export default function TournamentDetailPage() {
                   <p className="text-xs text-[oklch(0.40,0.04,290)]">No players joined yet</p>
                 </div>
               ) : (
-                <div className="space-y-2.5">
-                  {players.map((player, i) => {
-                    const hasResult = player.kills !== undefined || player.rank !== undefined;
-                    return (
-                      <div
-                        key={`${player.playerKey}-${i}`}
-                        className="rounded-xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.25,0.05,290)] overflow-hidden"
-                      >
-                        {/* Player Header — Name + Payment Badge */}
-                        <div className="flex items-center gap-2.5 px-3 py-2.5 bg-gradient-to-r from-purple-500/10 via-transparent to-transparent">
-                          <div className="flex items-center gap-2 min-w-0 shrink-0">
-                            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-fuchsia-600 flex items-center justify-center text-white text-xs font-bold shrink-0">
-                              {player.inGameName ? player.inGameName.charAt(0).toUpperCase() : '?'}
-                            </div>
-                            <div className="min-w-0">
-                              <p className="text-sm font-semibold text-white truncate leading-tight">
-                                {player.inGameName || 'Unknown'}
-                              </p>
-                              <p className="text-[10px] text-[oklch(0.50,0.04,290)] font-mono leading-tight mt-0.5">
-                                UID: {player.inGameUID || '-'}
-                              </p>
-                            </div>
-                          </div>
-                          <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-semibold border shrink-0 ml-auto ${
-                            player.paymentStatus
-                              ? 'border-green-500/30 text-green-400 bg-green-500/10'
-                              : 'border-yellow-500/30 text-yellow-400 bg-yellow-500/10'
-                          }`}>
-                            {player.paymentStatus ? <ShieldCheck className="w-3 h-3" /> : <CircleDot className="w-3 h-3" />}
-                            {player.paymentStatus ? 'Paid' : 'Unpaid'}
-                          </span>
-                        </div>
-
-                        {/* Player Info Row — Seat, Level, Join Time */}
-                        <div className="grid grid-cols-3 gap-1.5 px-2.5 py-2">
-                          <PStatCell
-                            label="Seat"
-                            value={String(player.positionSeat || '-')}
-                            icon={<Target className="w-3 h-3 text-cyan-400" />}
-                            bg="bg-cyan-500/8"
-                            text="text-cyan-300"
-                          />
-                          <PStatCell
-                            label="Level"
-                            value={String(player.inGameLevel || '-')}
-                            icon={<Shield className="w-3 h-3 text-blue-400" />}
-                            bg="bg-blue-500/8"
-                            text="text-blue-300"
-                          />
-                          <PStatCell
-                            label="Joined"
-                            value={player.joinTime > 0 ? formatJoinTime(player.joinTime) : '-'}
-                            icon={<Clock className="w-3 h-3 text-[oklch(0.50,0.04,290)]" />}
-                            bg="bg-[oklch(0.20,0.04,290)]"
-                            text="text-[oklch(0.65,0.04,290)]"
-                          />
-                        </div>
-
-                        {/* Fee Info Row */}
-                        <div className="grid grid-cols-2 gap-1.5 px-2.5 pb-2">
-                          <PStatCell
-                            label="Fee"
-                            value={formatRupees(player.joiningFee)}
-                            icon={<Coins className="w-3 h-3 text-yellow-400" />}
-                            bg="bg-yellow-500/8"
-                            text="text-yellow-300"
-                          />
-                          {player.finalAmount > 0 ? (
-                            <PStatCell
-                              label="Paid"
-                              value={formatRupees(player.finalAmount)}
-                              icon={<Coins className="w-3 h-3 text-green-400" />}
-                              bg="bg-green-500/8"
-                              text="text-green-300"
-                            />
-                          ) : player.referralBonusUsed > 0 ? (
-                            <PStatCell
-                              label="Referral"
-                              value={formatRupees(player.referralBonusUsed)}
-                              icon={<Coins className="w-3 h-3 text-purple-400" />}
-                              bg="bg-purple-500/8"
-                              text="text-purple-300"
-                            />
-                          ) : (
-                            <PStatCell
-                              label="Paid"
-                              value="-"
-                              bg="bg-[oklch(0.20,0.04,290)]"
-                              text="text-[oklch(0.40,0.04,290)]"
-                            />
-                          )}
-                        </div>
-
-                        {/* Result Stats — Only if results available */}
-                        {hasResult && (
-                          <div className="border-t border-[oklch(0.25,0.05,290)]">
-                            <div className="grid grid-cols-3 gap-1.5 px-2.5 py-2">
-                              {player.rank !== undefined && (
-                                <PStatCell
-                                  label="Rank"
-                                  value={`#${player.rank}`}
-                                  icon={<Award className="w-3 h-3 text-amber-400" />}
-                                  bg="bg-amber-500/10"
-                                  text="text-amber-300"
-                                />
-                              )}
-                              {player.kills !== undefined && (
-                                <PStatCell
-                                  label="Kills"
-                                  value={String(player.kills)}
-                                  icon={<Skull className="w-3 h-3 text-red-400" />}
-                                  bg="bg-red-500/10"
-                                  text="text-red-300"
-                                />
-                              )}
-                              {player.assists !== undefined && (
-                                <PStatCell
-                                  label="Assists"
-                                  value={String(player.assists)}
-                                  icon={<Shield className="w-3 h-3 text-blue-400" />}
-                                  bg="bg-blue-500/10"
-                                  text="text-blue-300"
-                                />
-                              )}
-                            </div>
-                            {(player.damage !== undefined || (player.coinsEarned !== undefined && player.coinsEarned > 0)) && (
-                              <div className="grid grid-cols-2 gap-1.5 px-2.5 pb-2">
-                                {player.damage !== undefined && (
-                                  <PStatCell
-                                    label="Damage"
-                                    value={String(player.damage)}
-                                    icon={<Flame className="w-3 h-3 text-orange-400" />}
-                                    bg="bg-orange-500/10"
-                                    text="text-orange-300"
-                                  />
-                                )}
-                                {player.coinsEarned !== undefined && player.coinsEarned > 0 ? (
-                                  <PStatCell
-                                    label="Earned"
-                                    value={`+${formatRupees(player.coinsEarned)}`}
-                                    icon={<Coins className="w-3 h-3 text-green-400" />}
-                                    bg="bg-green-500/10"
-                                    text="text-green-300"
-                                  />
-                                ) : (
-                                  <PStatCell
-                                    label="Earned"
-                                    value="-"
-                                    bg="bg-[oklch(0.20,0.04,290)]"
-                                    text="text-[oklch(0.40,0.04,290)]"
-                                  />
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        )}
+                <div className="space-y-2">
+                  {players.map((player, i) => (
+                    <div
+                      key={`${player.playerKey}-${i}`}
+                      onClick={() => setSelectedPlayer(player)}
+                      className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.25,0.05,290)] hover:border-[oklch(0.35,0.06,290)] active:scale-[0.99] transition-all cursor-pointer"
+                    >
+                      {/* Avatar */}
+                      <div className="w-9 h-9 rounded-full bg-gradient-to-br from-purple-500 to-fuchsia-600 flex items-center justify-center text-white text-sm font-bold shrink-0">
+                        {player.inGameName ? player.inGameName.charAt(0).toUpperCase() : '?'}
                       </div>
-                    );
-                  })}
+
+                      {/* Name + UID */}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-white truncate leading-tight">
+                          {player.inGameName || 'Unknown'}
+                        </p>
+                        <p className="text-[10px] text-[oklch(0.50,0.04,290)] font-mono leading-tight mt-0.5">
+                          UID: {player.inGameUID || '-'}
+                        </p>
+                      </div>
+
+                      {/* Seat + Level + Joined */}
+                      <div className="flex items-center gap-2.5 shrink-0">
+                        <div className="text-center">
+                          <p className="text-[8px] font-bold text-[oklch(0.40,0.04,290)] uppercase leading-none">Seat</p>
+                          <p className="text-xs font-bold text-cyan-400 mt-0.5">{player.positionSeat || '-'}</p>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-[8px] font-bold text-[oklch(0.40,0.04,290)] uppercase leading-none">Level</p>
+                          <p className="text-xs font-bold text-blue-400 mt-0.5">{player.inGameLevel || '-'}</p>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-[8px] font-bold text-[oklch(0.40,0.04,290)] uppercase leading-none">Joined</p>
+                          <p className="text-[10px] font-bold text-[oklch(0.65,0.04,290)] mt-0.5">{player.joinTime > 0 ? formatJoinTime(player.joinTime) : '-'}</p>
+                        </div>
+                      </div>
+
+                      {/* Paid Badge */}
+                      <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-semibold border shrink-0 ${
+                        player.paymentStatus
+                          ? 'border-green-500/30 text-green-400 bg-green-500/10'
+                          : 'border-yellow-500/30 text-yellow-400 bg-yellow-500/10'
+                      }`}>
+                        {player.paymentStatus ? <ShieldCheck className="w-3 h-3" /> : <CircleDot className="w-3 h-3" />}
+                        {player.paymentStatus ? 'Paid' : 'Unpaid'}
+                      </span>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
@@ -655,6 +733,14 @@ export default function TournamentDetailPage() {
           </div>
         )}
       </div>
+
+      {/* ═══ Player Detail Popup ═══ */}
+      {selectedPlayer && (
+        <PlayerPopup
+          player={selectedPlayer}
+          onClose={() => setSelectedPlayer(null)}
+        />
+      )}
     </div>
   );
 }
