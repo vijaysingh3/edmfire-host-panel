@@ -144,13 +144,13 @@ function StatCell({ label, value, valueColor = 'text-white', icon }: {
   icon?: React.ReactNode;
 }) {
   return (
-    <div className="rounded-lg bg-[oklch(0.22,0.04,290)] px-2.5 py-2">
-      <p className="text-[9px] font-medium text-[oklch(0.45,0.04,290)] uppercase tracking-wide mb-0.5">
+    <div className="rounded-md bg-[oklch(0.22,0.04,290)] px-2 py-1.5">
+      <p className="text-[8px] font-medium text-[oklch(0.45,0.04,290)] uppercase tracking-wide leading-none mb-0.5">
         {label}
       </p>
       <div className="flex items-center gap-1">
         {icon}
-        <p className={`text-xs font-bold ${valueColor} leading-tight truncate`}>{value}</p>
+        <p className={`text-[11px] font-bold ${valueColor} leading-tight truncate`}>{value}</p>
       </div>
     </div>
   );
@@ -408,34 +408,34 @@ export default function TournamentsPage() {
                       {/* Top Accent Line */}
                       <div className={`h-0.5 bg-gradient-to-r ${tc.bg}`} />
 
-                      <div className="p-3 lg:p-3.5">
+                      <div className="p-2.5 lg:p-3">
 
                         {/* Row 1 — Type Badge + ID + Status + Arrow */}
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold shrink-0 ${tc.text}`}>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] font-bold shrink-0 ${tc.text}`}>
                               {tc.icon}
                               {tc.label}
                             </span>
-                            <span className="text-[10px] font-mono text-[oklch(0.50,0.04,290)] truncate">
+                            <span className="text-[9px] font-mono text-[oklch(0.50,0.04,290)] truncate">
                               {tour.tournamentId}
                             </span>
                           </div>
-                          <div className="flex items-center gap-2 shrink-0 ml-2">
-                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${sc}`}>
+                          <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                            <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-bold border ${sc}`}>
                               {tour.status}
                             </span>
-                            <ChevronRight className="w-4 h-4 text-[oklch(0.30,0.04,290)]" />
+                            <ChevronRight className="w-3.5 h-3.5 text-[oklch(0.30,0.04,290)]" />
                           </div>
                         </div>
 
                         {/* Row 2 — Title */}
                         {tour.title && tour.title !== tour.tournamentId && (
-                          <p className="text-sm font-bold text-white mb-2.5 leading-snug">{tour.title}</p>
+                          <p className="text-[13px] font-bold text-white mb-1.5 leading-tight">{tour.title}</p>
                         )}
 
                         {/* Row 3 — Stat Grid (2x2 gaming style) */}
-                        <div className="grid grid-cols-2 gap-1.5 mb-2.5">
+                        <div className="grid grid-cols-2 gap-1 mb-1.5">
                           <StatCell
                             label="Entry Fee"
                             value={formatRupees(tour.joiningFee)}
@@ -464,11 +464,11 @@ export default function TournamentsPage() {
 
                         {/* Row 4 — Per Kill + DateTime */}
                         {(tour.perKill > 0 || tour.dateTime) && (
-                          <div className="flex items-center justify-between mb-2.5 px-1">
+                          <div className="flex items-center justify-between mb-1.5">
                             {tour.perKill > 0 && (
                               <div className="flex items-center gap-1">
                                 <Target className="w-3 h-3 text-red-400" />
-                                <span className="text-[11px] font-semibold text-red-400">
+                                <span className="text-[10px] font-semibold text-red-400">
                                   Per Kill: {formatRupees(tour.perKill)}
                                 </span>
                               </div>
@@ -476,7 +476,7 @@ export default function TournamentsPage() {
                             {tour.dateTime && (
                               <div className="flex items-center gap-1">
                                 <Clock className="w-3 h-3 text-blue-400" />
-                                <span className="text-[11px] font-semibold text-blue-300">
+                                <span className="text-[10px] font-semibold text-blue-300">
                                   {tour.dateTime}
                                 </span>
                               </div>
@@ -485,19 +485,19 @@ export default function TournamentsPage() {
                         )}
 
                         {/* Row 5 — Players Progress + Time Ago */}
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-2">
                           {!isCompleted ? (
                             <div className="flex-1 min-w-0">
-                              <div className="flex items-center justify-between mb-1">
+                              <div className="flex items-center justify-between mb-0.5">
                                 <div className="flex items-center gap-1">
                                   <Users className="w-3 h-3 text-[oklch(0.45,0.04,290)]" />
-                                  <span className="text-[10px] text-[oklch(0.55,0.04,290)]">
+                                  <span className="text-[9px] text-[oklch(0.55,0.04,290)]">
                                     {tour.joinedCount}/{tour.maxSlots} Joined
                                   </span>
                                 </div>
-                                <span className="text-[10px] font-bold text-white">{progressPercent}%</span>
+                                <span className="text-[9px] font-bold text-white">{progressPercent}%</span>
                               </div>
-                              <div className="h-1.5 rounded-full bg-[oklch(0.25,0.05,290)] overflow-hidden">
+                              <div className="h-1 rounded-full bg-[oklch(0.25,0.05,290)] overflow-hidden">
                                 <div
                                   className="h-full rounded-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-all duration-500"
                                   style={{ width: `${progressPercent}%` }}
@@ -507,12 +507,12 @@ export default function TournamentsPage() {
                           ) : (
                             <div className="flex-1 flex items-center gap-1">
                               <Users className="w-3 h-3 text-[oklch(0.45,0.04,290)]" />
-                              <span className="text-[10px] text-[oklch(0.55,0.04,290)]">
+                              <span className="text-[9px] text-[oklch(0.55,0.04,290)]">
                                 {tour.joinedCount}/{tour.maxSlots} Played
                               </span>
                             </div>
                           )}
-                          <span className="text-[10px] text-[oklch(0.35,0.04,290)] shrink-0">
+                          <span className="text-[9px] text-[oklch(0.35,0.04,290)] shrink-0">
                             {formatTimeAgo(tour.createdAt)}
                           </span>
                         </div>
