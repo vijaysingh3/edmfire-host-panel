@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -14,14 +14,9 @@ import {
 import { toast } from 'sonner';
 import { useAuth } from '@/context/AuthContext';
 import { fetchRemoteConfig, getRemoteString, RC_KEYS } from '@/lib/remoteConfig';
-import { rtdbGet, rtdbPut, rtdbPatch, rtdbPush, rtdbDelete } from '@/lib/rtdb';
+import { rtdbGet } from '@/lib/rtdb';
+import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import {
-  doc,
-  runTransaction,
-  setDoc,
-  serverTimestamp,
-} from 'firebase/firestore';
 import {
   RotateCcw,
   RefreshCw,
@@ -29,10 +24,12 @@ import {
   Users,
   Terminal,
   Trash2,
+  Wallet,
+  Activity,
 } from 'lucide-react';
 
 // ═══════════════════════════════════════════════════
-// CONSTANTS — Kotlin RefundCoinsActivity companion object
+// CONSTANTS
 // ═══════════════════════════════════════════════════
 const TOURNAMENT_TYPES = [
   { value: 'BattleRoyal', label: 'BattleRoyal' },
@@ -41,17 +38,15 @@ const TOURNAMENT_TYPES = [
   { value: 'LoneWolf', label: 'LoneWolf' },
 ];
 
-// ClashSquad and LoneWolf use array format for JoinedPlayers
 const ARRAY_FORMAT_TYPES = ['ClashSquad', 'LoneWolf'];
 
-// RTDB path helpers — Kotlin basePath() / metaPath()
 const basePath = (type: string, id: string) =>
   `Tournaments/TournamentDetails/${type}/${id}`;
 const metaPath = (type: string) =>
   `Tournaments/TournamentMeta/${type}`;
 
 // ═══════════════════════════════════════════════════
-// TYPES — Kotlin RefundPlayerModel data class
+// TYPES
 // ═══════════════════════════════════════════════════
 interface RefundPlayerModel {
   playerKey: string;
@@ -63,9 +58,6 @@ interface RefundPlayerModel {
   joiningFee: number; // PAISA
 }
 
-// ═══════════════════════════════════════════════════
-// LOG TYPES
-// ═══════════════════════════════════════════════════
 type LogType = 'INFO' | 'SUCCESS' | 'WARNING' | 'ERROR';
 
 interface LogEntry {
@@ -84,40 +76,42 @@ function getCurrentTime(): string {
 }
 
 // ═══════════════════════════════════════════════════
-// HELPERS — Kotlin companion object utils
+// HELPERS
 // ═══════════════════════════════════════════════════
 
-// Bank Method: PAISA → RUPEES display
+// PAISA → "X Coins" display (NEVER show paisa / ₹ to user)
 function formatRupees(paisa: number): string {
   const rupees = paisa / 100;
-  return rupees % 1 === 0 ? `${Math.round(rupees)} Coins` : `${rupees} Coins`;
+  return rupees % 1 === 0 ? `${Math.round(rupees)} Coins` : `${parseFloat(rupees.toFixed(2))} Coins`;
 }
 
-// IST timestamp: "09 May 2026, 10:30 AM"
-function getISTTimestamp(): string {
-  return new Date().toLocaleDateString('en-IN', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  }) + ', ' + new Date().toLocaleTimeString('en-IN', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: true,
-  });
+// Mask URL for logs (never show full URL)
+function maskUrl(url: string): string {
+  if (!url || url.length < 20) return '***';
+  return url.substring(0, 25) + '...';
 }
 
-// Transaction ID: RFD_{timestamp}_{random}
-function generateTransactionId(): string {
-  const timestamp = Date.now();
-  const random = Math.floor(1000 + Math.random() * 9000);
-  return `RFD_${timestamp}_${random}`;
-}
+// Convert RTDB object with numeric keys to array
+const convertToArray = (obj: any): any[] => {
+  if (!obj || typeof obj !== 'object') return [];
+  const keys = Object.keys(obj).map(Number).filter(k => !isNaN(k));
+  const maxIdx = keys.length > 0 ? Math.max(...keys) : -1;
+  if (maxIdx < 0) return [];
+  const arr: any[] = [];
+  for (let i = 0; i <= maxIdx; i++) {
+    arr.push(obj[i.toString()]);
+  }
+  return arr;
+};
 
+// ═══════════════════════════════════════════════════
+// MAIN PAGE
+// ═══════════════════════════════════════════════════
 export default function RefundCoinsPage() {
   const { user, isLoading: authLoading } = useAuth();
   const logEndRef = useRef<HTMLDivElement>(null);
 
-  // ── UI State — Kotlin spinnerTournamentType, etTournamentId ──
+  // ── UI State ──
   const [tournamentType, setTournamentType] = useState('');
   const [tournamentId, setTournamentId] = useState('');
   const [typeEnabled, setTypeEnabled] = useState(false);
@@ -133,41 +127,59 @@ export default function RefundCoinsPage() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [showLog, setShowLog] = useState(false);
 
-  // ── Tournament data — Kotlin tournamentIdsMap ──
+  // ── Tournament data ──
   const tournamentIdsMap = useRef<Record<string, string[]>>({});
 
-  // ── Players — Kotlin playersList ──
+  // ── Players ──
   const [players, setPlayers] = useState<RefundPlayerModel[]>([]);
   const [joiningFeePaisa, setJoiningFeePaisa] = useState(0);
 
-  // ── Dialog state — Kotlin showRefundDialogWithSlider ──
+  // ── Dialog state ──
   const [dialogOpen, setDialogOpen] = useState(false);
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
   const [selectedPlayer, setSelectedPlayer] = useState<RefundPlayerModel | null>(null);
   const [refundPercent, setRefundPercent] = useState(100);
   const [customPercent, setCustomPercent] = useState('100');
 
+  // ── Realtime Wallet Balance ──
+  const [walletBalance, setWalletBalance] = useState(0);
+  const [displayBalance, setDisplayBalance] = useState(0);
+  const [walletStatus, setWalletStatus] = useState<'idle' | 'deducting'>('idle');
+  const animationRef = useRef<number | null>(null);
+  const prevBalanceRef = useRef(0);
+
+  // ── Function URL ──
+  const refundFunctionUrl = useRef<string>('');
+
   // ═══════════════════════════════════════════════════
-  // INIT — Kotlin onCreate → setupRemoteConfig() + loadTournamentIds()
+  // INIT — Fetch Config + Load Tournaments
   // ═══════════════════════════════════════════════════
   useEffect(() => {
     if (authLoading || !user) return;
     const init = async () => {
-      appendLog('Fetching Remote Config...', 'INFO');
+      appendLog('Fetching config...', 'INFO');
       setConfigLoading(true);
 
       await fetchRemoteConfig();
 
       const rtdbUrl = getRemoteString(RC_KEYS.RTDB_URL);
       const rtdbSecret = getRemoteString(RC_KEYS.RTDB_SECRET);
+      const funcUrl = getRemoteString('Fun_refundjoinedplayers');
 
-      appendLog('Remote Config fetched', 'SUCCESS');
+      refundFunctionUrl.current = funcUrl;
+
+      appendLog('Config fetched', 'SUCCESS');
       appendLog(`Database URL: ${rtdbUrl ? 'Received' : 'EMPTY'}`, rtdbUrl ? 'INFO' : 'WARNING');
       appendLog(`DB Secret: ${rtdbSecret ? 'Received' : 'EMPTY'}`, rtdbSecret ? 'INFO' : 'WARNING');
+      appendLog(`Refund API: ${funcUrl ? maskUrl(funcUrl) : 'EMPTY'}`, funcUrl ? 'INFO' : 'WARNING');
 
       if (!rtdbUrl || !rtdbSecret) {
         appendLog('Config error: URL or Secret missing', 'ERROR');
         toast.warning('Config error: URL or Secret missing');
+      }
+
+      if (!funcUrl) {
+        appendLog('Refund function URL missing from config', 'WARNING');
       }
 
       setConfigLoading(false);
@@ -179,15 +191,73 @@ export default function RefundCoinsPage() {
     init();
   }, [user, authLoading]);
 
+  // ── Realtime Wallet Balance (onSnapshot) ──
+  useEffect(() => {
+    if (authLoading || !user) return;
+
+    const walletDocRef = doc(db, 'hosts', user.uid, 'accountBalance', 'wallet');
+    const unsubscribe = onSnapshot(walletDocRef, (snap) => {
+      if (snap.exists()) {
+        const bal = snap.data()?.walletBalance || 0;
+        prevBalanceRef.current = walletBalance;
+        setWalletBalance(bal);
+        setWalletStatus('deducting');
+        // Animation will be triggered by displayBalance useEffect
+      }
+    }, (err) => {
+      // Wallet doc might not exist yet — silent
+    });
+
+    return () => unsubscribe();
+  }, [user, authLoading]);
+
+  // ── Animated Balance Counter (cubic ease-out ~1s) ──
+  useEffect(() => {
+    const prev = prevBalanceRef.current;
+    const target = walletBalance;
+
+    if (prev === target) {
+      setWalletStatus('idle');
+      return;
+    }
+
+    if (animationRef.current) {
+      cancelAnimationFrame(animationRef.current);
+    }
+
+    const startVal = displayBalance;
+    const startTime = performance.now();
+    const duration = 1000;
+
+    const easeOut = (t: number) => 1 - Math.pow(1 - t, 3);
+
+    const animate = (now: number) => {
+      const elapsed = now - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      const easedProgress = easeOut(progress);
+      const current = startVal + (target - startVal) * easedProgress;
+      setDisplayBalance(Math.round(current));
+
+      if (progress < 1) {
+        animationRef.current = requestAnimationFrame(animate);
+      } else {
+        setDisplayBalance(target);
+        setWalletStatus('idle');
+      }
+    };
+
+    animationRef.current = requestAnimationFrame(animate);
+  }, [walletBalance]);
+
   // Auto-scroll log
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [logs]);
 
   // ── Append to log ──
-  const appendLog = (message: string, type: LogType = 'INFO') => {
+  const appendLog = useCallback((message: string, type: LogType = 'INFO') => {
     setLogs((prev) => [...prev, { message, type, time: getCurrentTime() }]);
-  };
+  }, []);
 
   const handleClearLog = () => {
     setLogs([]);
@@ -195,8 +265,7 @@ export default function RefundCoinsPage() {
   };
 
   // ═══════════════════════════════════════════════════
-  // LOAD TOURNAMENT IDS — Kotlin loadTournamentIds()
-  // Fetch from RTDB: Tournaments/TournamentMeta/{type}
+  // LOAD TOURNAMENT IDS
   // ═══════════════════════════════════════════════════
   const loadTournamentIds = async () => {
     if (dataLoading) {
@@ -227,7 +296,6 @@ export default function RefundCoinsPage() {
     setDataLoading(false);
     setTypeEnabled(true);
 
-    // Initial: first type select
     updateTournamentIdField(TOURNAMENT_TYPES[0].value);
     setTournamentType(TOURNAMENT_TYPES[0].value);
     appendLog('Tournament IDs loaded', 'SUCCESS');
@@ -253,7 +321,6 @@ export default function RefundCoinsPage() {
     }
   };
 
-  // ── Type change handler ──
   const handleTypeChange = (value: string) => {
     setTournamentType(value);
     appendLog(`Selected: ${value}`, 'INFO');
@@ -262,7 +329,7 @@ export default function RefundCoinsPage() {
   };
 
   // ═══════════════════════════════════════════════════
-  // REFRESH — Kotlin refreshTournamentIdsForType() + fetchTournamentAndPlayersData()
+  // REFRESH
   // ═══════════════════════════════════════════════════
   const handleRefresh = async () => {
     if (dataLoading || refreshing) {
@@ -278,7 +345,6 @@ export default function RefundCoinsPage() {
     setRefreshing(true);
 
     try {
-      // Refresh IDs for selected type only (1 query vs 4)
       const data = await rtdbGet(metaPath(tournamentType));
       const ids = parseTournamentMetaIds(data, tournamentType);
       tournamentIdsMap.current[tournamentType] = ids;
@@ -296,7 +362,6 @@ export default function RefundCoinsPage() {
         setIdEnabled(false);
       }
 
-      // Also fetch players for current tournament
       await fetchTournamentAndPlayersData();
     } catch (e: any) {
       appendLog(`Refresh failed: ${e.message}`, 'ERROR');
@@ -306,8 +371,7 @@ export default function RefundCoinsPage() {
   };
 
   // ═══════════════════════════════════════════════════
-  // FETCH TOURNAMENT + PLAYERS — Kotlin fetchTournamentAndPlayersData()
-  // RTDB: Tournaments/TournamentDetails/{type}/{id}
+  // FETCH TOURNAMENT + PLAYERS
   // ═══════════════════════════════════════════════════
   const fetchTournamentAndPlayersData = async () => {
     const id = tournamentId.trim();
@@ -330,12 +394,10 @@ export default function RefundCoinsPage() {
         return;
       }
 
-      // JoiningFee — PAISA mein
       const fee = data.JoiningFee || 0;
       setJoiningFeePaisa(fee);
-      appendLog(`Joining Fee: ${formatRupees(fee)} | PAISA: ${fee}`, 'INFO');
+      appendLog(`Joining Fee: ${formatRupees(fee)}`, 'INFO');
 
-      // JoinedPlayers parse
       if (data.JoinedPlayers) {
         parseJoinedPlayers(data.JoinedPlayers, tournamentType, id, fee);
       } else {
@@ -351,14 +413,12 @@ export default function RefundCoinsPage() {
   };
 
   // ═══════════════════════════════════════════════════
-  // PARSE JOINED PLAYERS — Kotlin parseJoinedPlayers()
-  // Array format (ClashSquad/LoneWolf) vs Object format (BattleRoyal/FreeTournaments)
+  // PARSE JOINED PLAYERS
   // ═══════════════════════════════════════════════════
   const parseJoinedPlayers = (raw: any, type: string, tid: string, fee: number) => {
     const list: RefundPlayerModel[] = [];
 
     if (ARRAY_FORMAT_TYPES.includes(type)) {
-      // Array format — ClashSquad, LoneWolf
       const arr = Array.isArray(raw) ? raw : convertToArray(raw);
       for (let i = 0; i < arr.length; i++) {
         const item = arr[i];
@@ -374,7 +434,6 @@ export default function RefundCoinsPage() {
         });
       }
     } else {
-      // Object format — BattleRoyal, FreeTournaments
       if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
         for (const [key, val] of Object.entries(raw)) {
           const obj = val as Record<string, any>;
@@ -402,21 +461,8 @@ export default function RefundCoinsPage() {
     }
   };
 
-  // Convert RTDB object with numeric keys to array
-  const convertToArray = (obj: any): any[] => {
-    if (!obj || typeof obj !== 'object') return [];
-    const keys = Object.keys(obj).map(Number).filter(k => !isNaN(k));
-    const maxIdx = keys.length > 0 ? Math.max(...keys) : -1;
-    if (maxIdx < 0) return [];
-    const arr: any[] = [];
-    for (let i = 0; i <= maxIdx; i++) {
-      arr.push(obj[i.toString()]);
-    }
-    return arr;
-  };
-
   // ═══════════════════════════════════════════════════
-  // REFUND DIALOG — Kotlin showRefundDialogWithSlider()
+  // REFUND DIALOG
   // ═══════════════════════════════════════════════════
   const openRefundDialog = (player: RefundPlayerModel) => {
     setSelectedPlayer(player);
@@ -442,7 +488,6 @@ export default function RefundCoinsPage() {
     ? Math.floor((selectedPlayer.joiningFee * refundPercent) / 100)
     : 0;
 
-  // PROCEED REFUND → show confirmation
   const handleProceedRefund = () => {
     if (!selectedPlayer) return;
     setDialogOpen(false);
@@ -450,249 +495,183 @@ export default function RefundCoinsPage() {
   };
 
   // ═══════════════════════════════════════════════════
-  // CONFIRM + PROCESS — Kotlin showRefundConfirmationDialog() + processRefund()
+  // CONFIRM + CALL FUNCTION
   // ═══════════════════════════════════════════════════
   const handleRefundConfirm = async () => {
-    if (!selectedPlayer) return;
+    if (!selectedPlayer || !user) return;
     setConfirmDialogOpen(false);
-    await processRefund(selectedPlayer, refundAmountPaisa, refundPercent);
+    await callRefundFunction(selectedPlayer, refundAmountPaisa, refundPercent);
   };
 
   // ═══════════════════════════════════════════════════
-  // 5-STEP REFUND PROCESS — Kotlin processRefund() → Step 1-5
+  // CALL FIREBASE FUNCTION — refundJoinedPlayers
   // ═══════════════════════════════════════════════════
-  const processRefund = async (player: RefundPlayerModel, amountPaisa: number, percent: number) => {
+  const callRefundFunction = async (
+    player: RefundPlayerModel,
+    amountPaisa: number,
+    percent: number,
+  ) => {
     setRefundProcessing(true);
     setShowLog(true);
     appendLog('=== REFUND PROCESS START ===', 'INFO');
-    appendLog(`Player: ${player.inGameName} | Amount: ${formatRupees(amountPaisa)} (${percent}%)`, 'INFO');
+    appendLog(`Player: ${player.inGameName} (${player.userId})`, 'INFO');
+    appendLog(`Amount: ${formatRupees(amountPaisa)} (${percent}%)`, 'INFO');
+
+    // Get fresh function URL
+    const funcUrl = getRemoteString('Fun_refundjoinedplayers');
+
+    if (!funcUrl) {
+      appendLog('Function URL not found in config', 'ERROR');
+      toast.error('Refund function not configured');
+      setRefundProcessing(false);
+      return;
+    }
+
+    appendLog(`Calling API: ${maskUrl(funcUrl)}`, 'INFO');
 
     try {
-      // Step 1: Firestore TopUpCoins increment
-      appendLog('Step 1: Updating user coins (Firestore transaction)...', 'INFO');
-      const newBalance = await step1_UpdateUserCoins(player.userId, amountPaisa);
-      appendLog(`Step 1: Coins updated → ${newBalance} (${formatRupees(newBalance)})`, 'SUCCESS');
+      // Get Firebase Auth token
+      const token = await user.getIdToken();
+      if (!token) {
+        appendLog('Auth token failed', 'ERROR');
+        toast.error('Authentication failed');
+        setRefundProcessing(false);
+        return;
+      }
+      appendLog('Auth token generated', 'SUCCESS');
 
-      // Step 2: Firestore TransactionHistory
-      appendLog('Step 2: Saving transaction history...', 'INFO');
-      await step2_AddTransactionHistory(player, amountPaisa, percent);
-      appendLog('Step 2: Transaction history saved', 'SUCCESS');
+      // Build request body
+      const requestBody = {
+        tournamentType: player.tournamentType,
+        tournamentId: player.tournamentId,
+        hostId: user.uid,
+        playerKey: player.playerKey,
+        userId: player.userId,
+        inGameName: player.inGameName,
+        refundPercent: percent,
+        joiningFee: player.joiningFee,
+      };
 
-      // Step 3: RTDB PricePool deduct
-      appendLog('Step 3: Deducting from PricePool (RTDB)...', 'INFO');
-      await step3_DeductPricePool(player, amountPaisa);
-      appendLog('Step 3: PricePool updated', 'SUCCESS');
+      appendLog('Sending request...', 'INFO');
 
-      // Step 4: RTDB Move player to RemovedUsers
-      appendLog('Step 4: Moving player to RemovedUsers...', 'INFO');
-      await step4_MoveToRemovedUsers(player, amountPaisa, percent);
-      appendLog('Step 4: Player moved to RemovedUsers', 'SUCCESS');
+      // Call Firebase Function via REST
+      const response = await fetch(funcUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify(requestBody),
+      });
 
-      // Step 5: RTDB JoinedPlayersCount update
-      appendLog('Step 5: Updating JoinedPlayersCount...', 'INFO');
-      await step5_UpdateJoinedPlayersCount(player);
-      appendLog('Step 5: JoinedPlayersCount updated', 'SUCCESS');
+      const data = await response.json();
+      appendLog(`Response received (HTTP ${response.status})`, 'INFO');
+
+      if (!response.ok || data.error) {
+        // Handle error responses
+        handleFunctionError(data);
+        return;
+      }
+
+      // ═══ SUCCESS ═══
+      appendLog('=== FUNCTION RESPONSE ===', 'SUCCESS');
+
+      // Show function logs
+      if (data.logs && Array.isArray(data.logs)) {
+        for (const fnLog of data.logs) {
+          const logType = fnLog.includes('FAILED') || fnLog.includes('ERROR')
+            ? 'ERROR'
+            : fnLog.includes('DONE') || fnLog.includes('COMPLETE')
+              ? 'SUCCESS'
+              : 'INFO';
+          appendLog(`  ${fnLog}`, logType);
+        }
+      }
+
+      // Layer info
+      if (data.layer1Passed) appendLog('Layer 1: Host ownership verified', 'SUCCESS');
+      if (data.layer2Passed) appendLog(`Layer 2: Wallet balance sufficient (${formatRupees(data.hostWalletBalance)})`, 'SUCCESS');
+
+      // Steps completed
+      if (data.stepsCompleted && data.stepsCompleted.length > 0) {
+        appendLog(`Steps completed: ${data.stepsCompleted.join(', ')} / ${data.stepsCompleted.length}`, 'SUCCESS');
+      }
+
+      // Player result
+      appendLog(`${player.inGameName} — ${formatRupees(data.refundAmount)} refunded`, 'SUCCESS');
+      appendLog(`User TxnId: ${data.transactionId || 'N/A'}`, 'INFO');
+      appendLog(`Host TxnId: ${data.hostTxnId || 'N/A'}`, 'INFO');
+      appendLog(`User new balance: ${formatRupees(data.newCoinBalance)}`, 'INFO');
+      appendLog(`Host wallet: ${formatRupees(data.hostWalletBalance)} → ${formatRupees(data.newHostWallet)}`, 'INFO');
 
       appendLog('=== REFUND COMPLETE ===', 'SUCCESS');
       toast.success(`${player.inGameName} — ${formatRupees(amountPaisa)} refunded (${percent}%)`);
 
-      // Refresh player list after refund
+      // Refresh player list
       await fetchTournamentAndPlayersData();
 
     } catch (e: any) {
-      appendLog(`REFUND ERROR: ${e.message}`, 'ERROR');
+      appendLog(`Network error: ${e.message}`, 'ERROR');
       toast.error('Refund failed', { description: e.message });
     } finally {
       setRefundProcessing(false);
     }
   };
 
-  // ─── Step 1: Firestore TopUpCoins increment (transaction) ───
-  const step1_UpdateUserCoins = async (userId: string, amountPaisa: number): Promise<number> => {
-    const userRef = doc(db, 'Users', userId);
+  // ═══════════════════════════════════════════════════
+  // HANDLE FUNCTION ERROR RESPONSES
+  // ═══════════════════════════════════════════════════
+  const handleFunctionError = (data: any) => {
+    const error = data.error || 'unknown';
 
-    const newCoins = await runTransaction(db, async (transaction) => {
-      const docSnap = await transaction.get(userRef);
-      const currentCoins = docSnap.exists() ? (docSnap.data().TopUpCoins || 0) : 0;
-      const newBalance = currentCoins + amountPaisa;
-      transaction.update(userRef, {
-        TopUpCoins: newBalance,
-        LastUpdated: serverTimestamp(),
-      });
-      return newBalance;
-    });
-
-    return newCoins as number;
-  };
-
-  // ─── Step 2: Firestore TransactionHistory ───
-  const step2_AddTransactionHistory = async (
-    player: RefundPlayerModel,
-    amountPaisa: number,
-    percent: number,
-  ) => {
-    const transactionId = generateTransactionId();
-    const istTimestamp = getISTTimestamp();
-
-    const transactionRef = doc(db, 'Users', player.userId, 'TransactionHistory', transactionId);
-
-    await setDoc(transactionRef, {
-      transactionId,
-      transactionType: 'Tournament Refund',
-      amount: amountPaisa, // PAISA
-      paymentStatus: 'completed',
-      timestamp: istTimestamp,
-      description: `refund for not playing (${percent}% of joining fee) - TournamentID: ${player.tournamentId}`,
-      tournamentId: player.tournamentId,
-      refundPercent: percent,
-      processedAt: serverTimestamp(),
-    });
-  };
-
-  // ─── Step 3: RTDB PricePool deduct ───
-  const step3_DeductPricePool = async (player: RefundPlayerModel, amountPaisa: number) => {
-    const path = `${basePath(player.tournamentType, player.tournamentId)}/PricePool`;
-    const current = await rtdbGet(path);
-    const currentPool = typeof current === 'number' ? current : 0;
-    const newPool = Math.max(0, currentPool - amountPaisa);
-    appendLog(`   PricePool: ${currentPool} → ${newPool}`, 'INFO');
-    await rtdbPut(path, newPool);
-  };
-
-  // ─── Step 4: Move player to RemovedUsers ───
-  const step4_MoveToRemovedUsers = async (
-    player: RefundPlayerModel,
-    amountPaisa: number,
-    percent: number,
-  ) => {
-    if (ARRAY_FORMAT_TYPES.includes(player.tournamentType)) {
-      await handleArrayFormatRemoval(player, amountPaisa, percent);
-    } else {
-      await handleObjectFormatRemoval(player, amountPaisa, percent);
-    }
-  };
-
-  // Object format: BattleRoyal, FreeTournaments
-  const handleObjectFormatRemoval = async (
-    player: RefundPlayerModel,
-    amountPaisa: number,
-    percent: number,
-  ) => {
-    const playerPath = `${basePath(player.tournamentType, player.tournamentId)}/JoinedPlayers/${player.playerKey}`;
-    const removedPath = `${basePath(player.tournamentType, player.tournamentId)}/RemovedUsers`;
-
-    // Read player data
-    const playerData = await rtdbGet(playerPath);
-    if (!playerData || playerData === null) {
-      appendLog('Player data not found in tournament', 'ERROR');
-      toast.error('Player not found in tournament');
-      return;
-    }
-
-    // Add refund metadata
-    const enrichedPlayer = {
-      ...playerData,
-      refundedAt: Date.now(),
-      refundedBy: 'admin',
-      refundAmount: amountPaisa,
-      refundPercent: percent,
-      refundReason: `Tournament refund - ${percent}% of joining fee`,
-      originalJoiningFee: player.joiningFee,
-    };
-
-    // Push to RemovedUsers
-    appendLog('   Pushing to RemovedUsers...', 'INFO');
-    await rtdbPush(removedPath, enrichedPlayer);
-
-    // Delete from JoinedPlayers
-    appendLog('   Removing from JoinedPlayers...', 'INFO');
-    await rtdbDelete(playerPath);
-  };
-
-  // Array format: ClashSquad, LoneWolf
-  const handleArrayFormatRemoval = async (
-    player: RefundPlayerModel,
-    amountPaisa: number,
-    percent: number,
-  ) => {
-    const joinedPath = `${basePath(player.tournamentType, player.tournamentId)}/JoinedPlayers`;
-    const removedPath = `${basePath(player.tournamentType, player.tournamentId)}/RemovedUsers`;
-
-    // Read entire JoinedPlayers array
-    const rawData = await rtdbGet(joinedPath);
-    const arr = Array.isArray(rawData) ? rawData : convertToArray(rawData);
-
-    // Find index — 3 methods (same as Kotlin)
-    let resolvedIndex = -1;
-
-    // Method 1: playerKey as index
-    const keyAsInt = parseInt(player.playerKey);
-    if (!isNaN(keyAsInt) && keyAsInt >= 0 && keyAsInt < arr.length) {
-      if (arr[keyAsInt]?.userId === player.userId) {
-        resolvedIndex = keyAsInt;
-        appendLog(`   Method 1: Index from playerKey = ${resolvedIndex}`, 'INFO');
+    // Show function logs if available
+    if (data.logs && Array.isArray(data.logs)) {
+      for (const fnLog of data.logs) {
+        const logType = fnLog.includes('FAILED') ? 'ERROR' : 'INFO';
+        appendLog(`  ${fnLog}`, logType);
       }
     }
 
-    // Method 2: search by userId
-    if (resolvedIndex < 0) {
-      for (let i = 0; i < arr.length; i++) {
-        if (arr[i]?.userId === player.userId) {
-          resolvedIndex = i;
-          appendLog(`   Method 2: userId se index mila: ${i}`, 'INFO');
-          break;
+    switch (error) {
+      case 'notOwner':
+        appendLog('Layer 1 FAILED: You do not own this tournament', 'ERROR');
+        toast.error('Access Denied', {
+          description: `You do not own tournament ${selectedPlayer?.tournamentId}`,
+          duration: 6000,
+        });
+        break;
+
+      case 'insufficientBalance':
+        appendLog('Layer 2 FAILED: Insufficient wallet balance', 'ERROR');
+        appendLog(`Required: ${formatRupees(data.refundAmount || 0)}`, 'WARNING');
+        appendLog(`Available: ${formatRupees(data.hostWalletBalance || 0)}`, 'WARNING');
+        toast.warning('Insufficient Balance', {
+          description: `Required: ${formatRupees(data.refundAmount || 0)}, Available: ${formatRupees(data.hostWalletBalance || 0)}`,
+          duration: 6000,
+        });
+        break;
+
+      case 'processFailed':
+        appendLog(`Process FAILED at step ${data.failedStep || 'unknown'}: ${data.message || 'Unknown error'}`, 'ERROR');
+        if (data.stepsCompleted && data.stepsCompleted.length > 0) {
+          appendLog(`Completed steps before failure: ${data.stepsCompleted.join(', ')}`, 'WARNING');
         }
-      }
+        toast.error('Refund Failed', {
+          description: data.message || `Failed at step ${data.failedStep}`,
+          duration: 6000,
+        });
+        break;
+
+      default:
+        appendLog(`Error: ${data.message || 'Unknown error'}`, 'ERROR');
+        toast.error('Refund Failed', {
+          description: data.message || 'Unknown error',
+          duration: 6000,
+        });
     }
 
-    // Method 3: search by InGameName
-    if (resolvedIndex < 0) {
-      for (let i = 0; i < arr.length; i++) {
-        if (arr[i]?.InGameName === player.inGameName) {
-          resolvedIndex = i;
-          appendLog(`   Method 3: InGameName se index mila: ${i}`, 'INFO');
-          break;
-        }
-      }
-    }
-
-    if (resolvedIndex < 0 || resolvedIndex >= arr.length) {
-      appendLog('Player not found in array. Refresh and try again.', 'ERROR');
-      toast.error('Player not found in array. Refresh and try again.');
-      return;
-    }
-
-    const playerObj = arr[resolvedIndex] || {};
-    const enrichedPlayer = {
-      ...playerObj,
-      refundedAt: Date.now(),
-      refundedBy: 'admin',
-      refundAmount: amountPaisa,
-      refundPercent: percent,
-      refundReason: `Tournament refund - ${percent}% of joining fee`,
-      originalJoiningFee: player.joiningFee,
-      originalArrayIndex: resolvedIndex,
-    };
-
-    // Push to RemovedUsers
-    appendLog(`   Pushing to RemovedUsers (index: ${resolvedIndex})...`, 'INFO');
-    await rtdbPush(removedPath, enrichedPlayer);
-
-    // PATCH index to null
-    appendLog(`   Setting index ${resolvedIndex} to null...`, 'INFO');
-    const patchData: Record<string, null> = {};
-    patchData[resolvedIndex.toString()] = null;
-    await rtdbPatch(joinedPath, patchData);
-  };
-
-  // ─── Step 5: RTDB JoinedPlayersCount update ───
-  const step5_UpdateJoinedPlayersCount = async (player: RefundPlayerModel) => {
-    const countPath = `${basePath(player.tournamentType, player.tournamentId)}/JoinedPlayersCount`;
-    const current = await rtdbGet(countPath);
-    const currentCount = typeof current === 'number' ? current : 0;
-    const newCount = Math.max(0, currentCount - 1);
-    appendLog(`   JoinedPlayersCount: ${currentCount} → ${newCount}`, 'INFO');
-    await rtdbPut(countPath, newCount);
+    appendLog('=== REFUND FAILED ===', 'ERROR');
+    setRefundProcessing(false);
   };
 
   // ── Log color ──
@@ -707,6 +686,9 @@ export default function RefundCoinsPage() {
 
   const isLoading = configLoading || dataLoading || refreshing;
 
+  // ═══════════════════════════════════════════════════
+  // RENDER
+  // ═══════════════════════════════════════════════════
   return (
     <div className="min-h-screen pb-20 lg:pb-6">
       {/* Header */}
@@ -721,6 +703,31 @@ export default function RefundCoinsPage() {
       </header>
 
       <div className="max-w-4xl mx-auto px-4 lg:px-6 py-6 space-y-4">
+
+        {/* ── Realtime Wallet Balance ── */}
+        <div className="rounded-2xl bg-[oklch(0.16,0.04,290)] border border-[oklch(0.30,0.06,290)] p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-green-600 flex items-center justify-center shadow-lg shadow-green-500/20">
+                <Wallet className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <p className="text-[11px] text-[oklch(0.55,0.04,290)] font-semibold">Host Wallet Balance</p>
+                <p className={`text-xl font-extrabold tabular-nums transition-colors duration-500 ${
+                  walletStatus === 'deducting' ? 'text-red-400' : 'text-green-400'
+                }`}>
+                  {formatRupees(displayBalance)}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Activity className={`w-4 h-4 ${walletStatus === 'deducting' ? 'text-red-400 animate-pulse' : 'text-green-400'}`} />
+              <span className={`text-[11px] font-bold ${walletStatus === 'deducting' ? 'text-red-400' : 'text-green-400'}`}>
+                {walletStatus === 'deducting' ? 'Deducting...' : 'Live'}
+              </span>
+            </div>
+          </div>
+        </div>
 
         {/* Tournament Type + ID */}
         <div className="grid grid-cols-2 gap-3">
@@ -799,8 +806,8 @@ export default function RefundCoinsPage() {
 
                   {/* Row 3: Fee + Refund */}
                   <div className="flex items-center justify-between mt-2">
-                    <span className="text-xs font-bold text-green-400">Fee: {feeRupees} Coins</span>
-                    <span className="text-[11px] text-orange-400">Refund: {feeRupees} Coins (100%)</span>
+                    <span className="text-xs font-bold text-green-400">Fee: {feeRupees % 1 === 0 ? Math.round(feeRupees) : parseFloat(feeRupees.toFixed(2))} Coins</span>
+                    <span className="text-[11px] text-orange-400">Refund: {feeRupees % 1 === 0 ? Math.round(feeRupees) : parseFloat(feeRupees.toFixed(2))} Coins (100%)</span>
                   </div>
                 </button>
               );
