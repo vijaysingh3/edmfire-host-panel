@@ -79,6 +79,20 @@ function formatCoins(paisa: number): string {
   return coins % 1 === 0 ? `${Math.round(coins)} Coins` : `${parseFloat(coins.toFixed(2))} Coins`;
 }
 
+// ── Timestamp Parser — "17 May 2026, 01:11 am" / "16 May 2026, 3:30 PM" → Date
+function parseTxnTimestamp(ts: string): Date | null {
+  if (!ts || typeof ts !== 'string') return null;
+  try {
+    // Format: "16 May 2026, 3:30 PM" or "17 May 2026, 01:11 am" or "17 May 2026, 7:50 AM IST"
+    const cleaned = ts.replace(/IST$/i, '').trim();
+    const date = new Date(cleaned);
+    if (!isNaN(date.getTime())) return date;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 // ── Category Detection — Matches Firestore data from 3 functions ──
 // entryFee (joining)   → category: "entryFee",      transactionType: "credit"
 // priceDistribution    → category: "priceDistribution", transactionType: "debit"
@@ -237,8 +251,15 @@ export default function WalletPage() {
           processedAt: data.processedAt,
         });
       });
-      // Sort newest first by document ID
-      items.sort((a, b) => b.id.localeCompare(a.id));
+      // Sort newest first by timestamp (parsed from "17 May 2026, 01:11 am" format)
+      items.sort((a, b) => {
+        const dateA = parseTxnTimestamp(a.timestamp);
+        const dateB = parseTxnTimestamp(b.timestamp);
+        if (dateB && dateA) return dateB.getTime() - dateA.getTime();
+        if (dateB) return 1;
+        if (dateA) return -1;
+        return 0;
+      });
       setTransactions(items);
       setLoading(false);
     }, (err) => {
