@@ -14,8 +14,10 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { fetchRemoteConfig, getRemoteString, RC_KEYS } from '@/lib/remoteConfig';
 import { doc, onSnapshot, collection, query, orderBy, onSnapshot as colOnSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { toast } from 'sonner';
 
 // ═══════════════════════════════════════════════════
 // HELPERS
@@ -135,13 +137,68 @@ export default function WithdrawalPage() {
   }, [user, authLoading]);
 
   // ═══════════════════════════════════════════════════
-  // INPUT HANDLERS — Only UI, no function yet
+  // SUBMIT WITHDRAWAL — Cloud Function call
   // ═══════════════════════════════════════════════════
   const balanceCoins = walletBalance / 100;
 
-  const handleSubmit = () => {
-    // UI-only placeholder — function will be added later
-    alert('Withdrawal function will be added soon!');
+  const handleSubmit = async () => {
+    if (!user) {
+      toast.error('Not logged in');
+      return;
+    }
+
+    const coins = Number(coinsInput);
+    const detail = bankDetail.trim();
+
+    // Validation
+    if (!detail) { toast.error('Enter Bank Detail / UPI'); return; }
+    if (!coins || coins <= 0) { toast.error('Enter valid amount'); return; }
+    if (coins < 10) { toast.error('Minimum withdrawal is 10 Coins'); return; }
+    if (coins > 500) { toast.error('Maximum withdrawal is 500 Coins'); return; }
+    if (coins > balanceCoins) { toast.error('Insufficient balance'); return; }
+
+    setSubmitting(true);
+
+    try {
+      await fetchRemoteConfig();
+      const funcUrl = getRemoteString(RC_KEYS.FUN_WITHDRAWAL_REQUEST);
+
+      if (!funcUrl) {
+        toast.error('Function URL not configured');
+        return;
+      }
+
+      const amountPaisa = Math.round(coins * 100);
+
+      const res = await fetch(funcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          hostId: user.uid,
+          amount: amountPaisa,
+          bankDetail: detail,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (data.success) {
+        toast.success('Withdrawal submitted!', {
+          description: `${coins} Coins — ${data.transactionId || ''}`,
+        });
+        // Clear form
+        setBankDetail('');
+        setCoinsInput('');
+      } else {
+        toast.error('Withdrawal failed', {
+          description: data.error || data.message || 'Unknown error',
+        });
+      }
+    } catch (e: any) {
+      toast.error('Request failed', { description: e.message });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   // ═══════════════════════════════════════════════════
@@ -262,7 +319,7 @@ export default function WithdrawalPage() {
             {/* Submit Button */}
             <button
               onClick={handleSubmit}
-              disabled={!bankDetail.trim() || !coinsInput || Number(coinsInput) <= 0 || Number(coinsInput) > balanceCoins || submitting}
+              disabled={!bankDetail.trim() || !coinsInput || Number(coinsInput) <= 0 || Number(coinsInput) > balanceCoins || Number(coinsInput) < 10 || Number(coinsInput) > 500 || submitting}
               className="w-full h-12 rounded-xl bg-gradient-to-r from-yellow-500 to-amber-600 text-white font-bold text-sm shadow-lg shadow-yellow-500/20 disabled:opacity-30 disabled:shadow-none flex items-center justify-center gap-2 hover:scale-[1.01] active:scale-[0.99] transition-all"
             >
               {submitting ? (
