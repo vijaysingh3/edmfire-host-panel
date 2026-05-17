@@ -29,11 +29,15 @@ import {
   Check,
   AlertCircle,
   ShieldCheck,
+  XCircle,
   Copy,
   Ticket,
+  Search,
+  ArrowRight,
+  FileText,
 } from 'lucide-react';
 import Image from 'next/image';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, getDoc, getDocs, query, where, doc as docRef } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
@@ -166,7 +170,29 @@ const initialFormData: FormData = {
   whyJoin: '',
 };
 
+// ═══════════════════════════════════════════════════
+// TRACKING RESULT TYPE
+// ═══════════════════════════════════════════════════
+interface TrackingResult {
+  id: string;
+  fullName: string;
+  status: string;
+  createdAt: any;
+  gmail: string;
+  mobile: string;
+}
+
 export default function ApplyPage() {
+  // ── View mode: 'tracking' | 'form' ──
+  const [viewMode, setViewMode] = useState<'tracking' | 'form'>('tracking');
+
+  // ── Tracking state ──
+  const [trackInput, setTrackInput] = useState('');
+  const [trackMethod, setTrackMethod] = useState<'token' | 'phone' | 'email'>('token');
+  const [trackLoading, setTrackLoading] = useState(false);
+  const [trackResults, setTrackResults] = useState<TrackingResult[]>([]);
+
+  // ── Form state ──
   const [step, setStep] = useState(1);
   const [agreements, setAgreements] = useState([false, false, false]);
   const [formData, setFormData] = useState<FormData>(initialFormData);
@@ -188,6 +214,66 @@ export default function ApplyPage() {
 
   // tracking token (Firestore doc ID)
   const [trackingToken, setTrackingToken] = useState('');
+
+  // ═══════════════════════════════════════════════════
+  // TRACKING SEARCH FUNCTION
+  // ═══════════════════════════════════════════════════
+  const handleTrackSearch = async () => {
+    const input = trackInput.trim();
+    if (!input) { toast.error('Please enter a value to search'); return; }
+
+    if (trackMethod === 'token' && input.length < 5) {
+      toast.error('Token too short'); return;
+    }
+    if (trackMethod === 'phone' && !/^\d{10}$/.test(input)) {
+      toast.error('Enter a valid 10-digit phone number'); return;
+    }
+    if (trackMethod === 'email' && !EMAIL_REGEX.test(input)) {
+      toast.error('Enter a valid email address'); return;
+    }
+
+    setTrackLoading(true);
+    setTrackResults([]);
+
+    try {
+      let results: TrackingResult[] = [];
+
+      if (trackMethod === 'token') {
+        // Direct doc fetch by ID
+        const snap = await getDoc(docRef(db, 'applications', input));
+        if (snap.exists()) {
+          const d = snap.data();
+          results.push({ id: snap.id, fullName: d.fullName || '', status: d.status || 'pending', createdAt: d.createdAt, gmail: d.gmail || '', mobile: d.mobile || '' });
+        }
+      } else if (trackMethod === 'phone') {
+ // Query by mobile number
+        const q = query(collection(db, 'applications'), where('mobile', '==', input));
+        const snap = await getDocs(q);
+        snap.forEach((doc) => {
+          const d = doc.data();
+          results.push({ id: doc.id, fullName: d.fullName || '', status: d.status || 'pending', createdAt: d.createdAt, gmail: d.gmail || '', mobile: d.mobile || '' });
+        });
+      } else if (trackMethod === 'email') {
+        // Query by email
+        const q = query(collection(db, 'applications'), where('gmail', '==', input.toLowerCase()));
+        const snap = await getDocs(q);
+        snap.forEach((doc) => {
+          const d = doc.data();
+          results.push({ id: doc.id, fullName: d.fullName || '', status: d.status || 'pending', createdAt: d.createdAt, gmail: d.gmail || '', mobile: d.mobile || '' });
+        });
+      }
+
+      setTrackResults(results);
+      if (results.length === 0) {
+        toast.info('No application found', { description: 'No matching application found. Check your input and try again.' });
+      }
+    } catch (err: any) {
+      console.error('Track search error:', err);
+      toast.error('Search failed', { description: err.message || 'Something went wrong' });
+    } finally {
+      setTrackLoading(false);
+    }
+  };
 
   const updateField = (field: keyof FormData, value: string | string[]) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
@@ -652,6 +738,147 @@ export default function ApplyPage() {
     );
   }
 
+  // ═══════════════════════════════════════════════════
+  // TRACKING VIEW
+  // ═══════════════════════════════════════════════════
+  if (viewMode === 'tracking') {
+    const statusStyles: Record<string, { color: string; bg: string; icon: React.ReactNode; label: string }> = {
+      pending: { color: 'text-yellow-400', bg: 'bg-yellow-500/15 border-yellow-500/25', icon: <Clock className="w-3.5 h-3.5" />, label: 'Pending Review' },
+      approved: { color: 'text-green-400', bg: 'bg-green-500/15 border-green-500/25', icon: <CheckCircle2 className="w-3.5 h-3.5" />, label: 'Approved' },
+      rejected: { color: 'text-red-400', bg: 'bg-red-500/15 border-red-500/25', icon: <XCircle className="w-3.5 h-3.5" />, label: 'Rejected' },
+    };
+
+    return (
+      <div className="min-h-screen bg-[oklch(0.12,0.02,290)]">
+        {/* header */}
+        <header className="bg-gradient-to-r from-violet-700 to-indigo-700 px-4 lg:px-6 py-6 sticky top-0 z-20">
+          <div className="max-w-2xl mx-auto text-center">
+            <div className="flex items-center justify-center gap-2 mb-1">
+              <Image src="/logo.png" alt="EDMFIRE" width={28} height={28} className="rounded-lg" />
+              <h1 className="text-2xl font-extrabold text-white tracking-wide">
+                EDMFire Host Application
+              </h1>
+            </div>
+            <p className="text-sm text-white/70">
+              Track your application status
+            </p>
+          </div>
+        </header>
+
+        <div className="max-w-2xl mx-auto px-4 lg:px-6 py-6 space-y-5">
+
+          {/* Tracking Search Card */}
+          <Card className="bg-[oklch(0.18,0.04,290)] border-[oklch(0.30,0.06,290)]">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base text-white flex items-center gap-2">
+                <Search className="w-5 h-5 text-violet-400" />
+                <div>
+                  <span>Track Application</span>
+                  <p className="text-[10px] text-[oklch(0.55,0.04,290)] font-normal mt-0.5">Enter your tracking token, phone number, or email</p>
+                </div>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Method Tabs */}
+              <div className="flex gap-2">
+                {[
+                  { key: 'token' as const, label: 'Tracking Token', icon: <Ticket className="w-3.5 h-3.5" /> },
+                  { key: 'phone' as const, label: 'Phone', icon: <Smartphone className="w-3.5 h-3.5" /> },
+                  { key: 'email' as const, label: 'Email', icon: <FileText className="w-3.5 h-3.5" /> },
+                ].map((tab) => (
+                  <button key={tab.key} onClick={() => { setTrackMethod(tab.key); setTrackInput(''); setTrackResults([]); }}
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-[11px] font-medium transition-all ${
+                      trackMethod === tab.key
+                        ? 'bg-violet-500/20 text-violet-300 border border-violet-500/30'
+                        : 'bg-[oklch(0.22,0.04,290)] border border-[oklch(0.28,0.05,290)] text-[oklch(0.55,0.04,290)] hover:border-[oklch(0.35,0.06,290)]'
+                    }`}>
+                    {tab.icon} {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Input */}
+              <div className="relative">
+                <Input
+                  type={trackMethod === 'phone' ? 'tel' : 'text'}
+                  value={trackInput}
+                  onChange={(e) => {
+                    let val = e.target.value;
+                    if (trackMethod === 'phone') val = val.replace(/[^0-9]/g, '').slice(0, 10);
+                    setTrackInput(val);
+                  }}
+                  placeholder={trackMethod === 'token' ? 'Enter your tracking token' : trackMethod === 'phone' ? '10-digit mobile number' : 'your@email.com'}
+                  className={`${inputClass} h-12 pr-12`}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleTrackSearch(); }}
+                />
+                <button onClick={handleTrackSearch} disabled={trackLoading}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 w-9 h-9 rounded-lg bg-violet-500/20 hover:bg-violet-500/30 flex items-center justify-center transition-colors disabled:opacity-50">
+                  {trackLoading ? <Loader2 className="w-4 h-4 text-violet-300 animate-spin" /> : <Search className="w-4 h-4 text-violet-300" />}
+                </button>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Results */}
+          {trackResults.length > 0 && (
+            <div className="space-y-3">
+              <p className="text-xs text-[oklch(0.55,0.04,290)] font-medium">{trackResults.length} application(s) found</p>
+              {trackResults.map((r) => {
+                const st = statusStyles[r.status] || statusStyles.pending;
+                const dateStr = r.createdAt?.toDate?.()
+                  ? r.createdAt.toDate().toLocaleString('en-IN', { day: '2-digit', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit', hour12: true })
+                  : '';
+                return (
+                  <div key={r.id} className="rounded-xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.28,0.05,290)] p-4 space-y-3">
+                    {/* Top — Name + Status */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-9 h-9 rounded-lg bg-violet-500/15 flex items-center justify-center">
+                          <FileText className="w-4 h-4 text-violet-400" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-bold text-white">{r.fullName}</p>
+                          <p className="text-[10px] text-[oklch(0.45,0.04,290)]">Applied {dateStr}</p>
+                        </div>
+                      </div>
+                      <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border ${st.bg} ${st.color}`}>
+                        {st.icon} {st.label}
+                      </span>
+                    </div>
+                    {/* Token */}
+                    <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-[oklch(0.14,0.03,290)]">
+                      <div>
+                        <p className="text-[9px] text-[oklch(0.40,0.04,290)] uppercase tracking-wide">Tracking Token</p>
+                        <p className="text-xs font-mono font-bold text-white mt-0.5">{r.id}</p>
+                      </div>
+                      <button onClick={() => { navigator.clipboard.writeText(r.id); toast.success('Copied!'); }}
+                        className="p-1.5 rounded-lg bg-[oklch(0.20,0.04,290)] hover:bg-violet-500/20 transition-colors">
+                        <Copy className="w-3.5 h-3.5 text-[oklch(0.55,0.04,290)]" />
+                      </button>
+                    </div>
+                    {/* Contact */}
+                    <div className="flex items-center gap-4 text-[10px] text-[oklch(0.45,0.04,290)]">
+                      <span>Phone: {r.mobile}</span>
+                      <span>Email: {r.gmail}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Apply Now Button */}
+          <button onClick={() => setViewMode('form')}
+            className="w-full h-12 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-700 hover:from-violet-700 hover:to-indigo-800 text-white font-semibold shadow-lg shadow-violet-500/20 flex items-center justify-center gap-2 transition-all active:scale-[0.98]">
+            <ArrowRight className="w-4 h-4" />
+            Apply Now — Become a Host
+          </button>
+
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[oklch(0.12,0.02,290)]">
       {/* header */}
@@ -666,6 +893,9 @@ export default function ApplyPage() {
           <p className="text-sm text-white/70">
             Become an Official EDMFire Tournament Host
           </p>
+          <button onClick={() => setViewMode('tracking')} className="text-[10px] text-white/50 hover:text-white/80 transition-colors mt-1">
+            Back to Tracking
+          </button>
         </div>
       </header>
 
