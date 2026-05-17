@@ -19,7 +19,6 @@ import {
   Gamepad2,
   RotateCcw,
   Gift,
-  Download,
   Upload,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
@@ -57,7 +56,10 @@ interface TransactionItem {
   paymentStatus?: string;
   upiId?: string;
   processedAt?: any;
-  // Raw data for detail view
+  requestedAt?: any;
+  bankDetail?: string;
+  notes?: string;
+  walletBalanceBefore?: number;
   _raw?: Record<string, any>;
 }
 
@@ -69,6 +71,7 @@ const filterTabs = [
   { key: 'entry_fee', label: 'Entry Fee' },
   { key: 'prize', label: 'Prize Dist.' },
   { key: 'refund', label: 'Refund' },
+  { key: 'withdrawal', label: 'Withdrawal' },
 ];
 
 // ═══════════════════════════════════════════════════
@@ -101,6 +104,9 @@ function getTransactionCategory(doc: Record<string, any>): string {
   const category = (doc.category || '').toLowerCase();
   const txnType = (doc.transactionType || '').toLowerCase();
 
+  // Withdrawal check first
+  if (txnType === 'withdrawal') return 'withdrawal';
+
   // Direct category match (most reliable)
   if (category === 'entryfee') return 'entry_fee';
   if (category === 'prizedistribution') return 'prize';
@@ -109,14 +115,12 @@ function getTransactionCategory(doc: Record<string, any>): string {
   // Fallback: infer from transactionType
   if (txnType === 'credit') return 'entry_fee';
   if (txnType === 'debit') {
-    // Debit could be prize or refund — check for clues
     if ((doc.tournamentId || '').includes('RFD')) return 'refund';
     if (doc.refundPercent !== undefined) return 'refund';
-    if (doc.playerName && doc.playerUid) return 'entry_fee'; // entry fee has both
-    return 'prize'; // default debit → prize distribution
+    if (doc.playerName && doc.playerUid) return 'entry_fee';
+    return 'prize';
   }
 
-  // Legacy fallback from old format strings
   if (txnType.includes('refund')) return 'refund';
   if (txnType.includes('joining')) return 'entry_fee';
   if (txnType.includes('prize') || txnType.includes('distribution')) return 'prize';
@@ -146,6 +150,8 @@ function getTxnIcon(txn: TransactionItem): { icon: React.ReactNode; bg: string }
       return { icon: <Gift className="w-5 h-5" />, bg: 'bg-purple-500/15 text-purple-400' };
     case 'refund':
       return { icon: <RotateCcw className="w-5 h-5" />, bg: 'bg-orange-500/15 text-orange-400' };
+    case 'withdrawal':
+      return { icon: <Upload className="w-5 h-5" />, bg: 'bg-yellow-500/15 text-yellow-400' };
     default:
       return { icon: <Wallet className="w-5 h-5" />, bg: 'bg-[oklch(0.22,0.04,290)] text-[oklch(0.55,0.04,290)]' };
   }
@@ -162,6 +168,8 @@ function getTxnTitle(txn: TransactionItem): string {
       return 'Prize Distribution';
     case 'refund':
       return raw.playerName ? `Refund: ${raw.playerName}` : 'Refund Processed';
+    case 'withdrawal':
+      return 'Withdrawal Request';
     default:
       return 'Transaction';
   }
@@ -180,6 +188,8 @@ function getTxnSubtitle(txn: TransactionItem): string {
       if (raw.playerName && raw.tournamentId) return `${raw.playerName} — ${raw.tournamentId}`;
       if (raw.playerName) return raw.playerName;
       return raw.tournamentId ? `Tournament: ${raw.tournamentId}` : 'Player Refund';
+    case 'withdrawal':
+      return raw.bankDetail || 'Bank / UPI';
     default:
       return raw.description || '';
   }
@@ -249,6 +259,10 @@ export default function WalletPage() {
           category: data.category || '',
           upiId: data.upiId || '',
           processedAt: data.processedAt,
+          requestedAt: data.requestedAt,
+          bankDetail: data.bankDetail || '',
+          notes: data.notes || '',
+          walletBalanceBefore: data.walletBalanceBefore || 0,
         });
       });
       // Sort newest first by timestamp (parsed from "17 May 2026, 01:11 am" format)
@@ -296,15 +310,16 @@ export default function WalletPage() {
 
   // ── Stats — Only 3 active categories ──
   const stats = useMemo(() => {
-    let totalEntry = 0, totalPrize = 0, totalRefund = 0;
+    let totalEntry = 0, totalPrize = 0, totalRefund = 0, totalWithdrawal = 0;
     transactions.forEach((t) => {
       const amt = t.amount || 0;
       const cat = getTransactionCategory(t._raw || {});
       if (cat === 'entry_fee') totalEntry += amt;
       else if (cat === 'prize') totalPrize += amt;
       else if (cat === 'refund') totalRefund += amt;
+      else if (cat === 'withdrawal') totalWithdrawal += amt;
     });
-    return { totalEntry, totalPrize, totalRefund };
+    return { totalEntry, totalPrize, totalRefund, totalWithdrawal };
   }, [transactions]);
 
   // ═══════════════════════════════════════════════════
@@ -323,6 +338,7 @@ export default function WalletPage() {
       entry_fee: 'Entry Fee',
       prize: 'Prize Distribution',
       refund: 'Refund',
+      withdrawal: 'Withdrawal',
       other: 'Other',
     };
 
@@ -368,7 +384,7 @@ export default function WalletPage() {
 
             {[
               { label: 'Transaction ID', value: selectedTxn.transactionId || selectedTxn.id },
-              { label: 'Type', value: raw.transactionType === 'credit' ? 'Credit (+)' : 'Debit (-)' },
+              { label: 'Type', value: raw.transactionType === 'credit' ? 'Credit (+)' : raw.transactionType === 'withdrawal' ? 'Withdrawal (-)' : 'Debit (-)' },
               { label: 'Category', value: categoryLabels[category] || category || 'N/A' },
               { label: 'Amount', value: `${credit ? '+' : '-'}${formatCoins(selectedTxn.amount || 0)}` },
               { label: 'Timestamp', value: selectedTxn.timestamp || 'N/A' },
@@ -379,6 +395,8 @@ export default function WalletPage() {
               ...(selectedTxn.refundPercent ? [{ label: 'Refund Percent', value: `${selectedTxn.refundPercent}%` }] : []),
               ...(selectedTxn.walletBalanceAfter ? [{ label: 'Wallet After', value: formatCoins(selectedTxn.walletBalanceAfter) }] : []),
               ...(selectedTxn.description ? [{ label: 'Description', value: selectedTxn.description }] : []),
+              ...(selectedTxn.bankDetail ? [{ label: 'Bank Detail', value: selectedTxn.bankDetail }] : []),
+              ...(selectedTxn.notes ? [{ label: 'Notes', value: selectedTxn.notes }] : []),
             ].filter(Boolean).map((row) => (
               <div key={row.label} className="flex items-center justify-between px-4 py-3 border-b border-[oklch(0.22,0.04,290)] last:border-b-0">
                 <p className="text-xs text-[oklch(0.50,0.04,290)]">{row.label}</p>
@@ -387,15 +405,6 @@ export default function WalletPage() {
             ))}
           </div>
 
-          {/* Raw JSON (debug) */}
-          <details className="rounded-2xl bg-[oklch(0.16,0.04,290)] border border-[oklch(0.30,0.06,290)] overflow-hidden">
-            <summary className="px-4 py-3 bg-[oklch(0.12,0.02,290)] border-b border-[oklch(0.25,0.05,290)] text-xs font-bold text-[oklch(0.55,0.04,290)] cursor-pointer">
-              Raw Data (Debug)
-            </summary>
-            <pre className="p-4 text-[10px] text-[oklch(0.50,0.04,290)] font-mono overflow-x-auto leading-relaxed">
-              {JSON.stringify(raw, null, 2)}
-            </pre>
-          </details>
         </div>
       </div>
     );
@@ -457,6 +466,7 @@ export default function WalletPage() {
               { label: 'Entry Fees', amount: `+${formatCoins(stats.totalEntry)}`, color: 'text-green-400', icon: ArrowDownLeft },
               { label: 'Prize Paid', amount: `-${formatCoins(stats.totalPrize)}`, color: 'text-purple-400', icon: Gift },
               { label: 'Refunded', amount: `-${formatCoins(stats.totalRefund)}`, color: 'text-orange-400', icon: TrendingDown },
+              { label: 'Withdrawn', amount: `-${formatCoins(stats.totalWithdrawal)}`, color: 'text-yellow-400', icon: Upload },
             ].map((stat) => (
               <div key={stat.label}
                 className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[oklch(0.22,0.04,290)] border border-[oklch(0.28,0.05,290)] shrink-0 min-w-[120px]">
