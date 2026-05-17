@@ -222,13 +222,9 @@ export default function ApplyPage() {
     if (step > 1) setStep(step - 1);
   };
 
-  // step click handler — only allow completed steps or current step
+  // step click handler — allow all steps for preview, validation only on apply
   const handleStepClick = (targetStep: number) => {
-    if (completedSteps.has(targetStep) || targetStep === step) {
-      setStep(targetStep);
-    } else {
-      toast.info(`Complete Step ${step} first`, { description: 'Please fill all required fields to proceed.' });
-    }
+    setStep(targetStep);
   };
 
   const validateCurrentStep = (): boolean => {
@@ -699,10 +695,9 @@ export default function ApplyPage() {
               <button
                 key={i}
                 onClick={() => handleStepClick(stepNum)}
-                disabled={isFuture}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-medium whitespace-nowrap shrink-0 transition-all ${
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-medium whitespace-nowrap shrink-0 transition-all cursor-pointer ${
                   isFuture
-                    ? 'bg-[oklch(0.18,0.04,290)] text-[oklch(0.35,0.04,290)] border border-[oklch(0.22,0.05,290)] cursor-not-allowed opacity-50'
+                    ? 'bg-[oklch(0.18,0.04,290)] text-[oklch(0.45,0.04,290)] border border-[oklch(0.28,0.05,290)] hover:border-[oklch(0.35,0.06,290)] hover:text-[oklch(0.55,0.04,290)]'
                     : isCurrent
                     ? 'bg-violet-500/20 text-violet-300 border border-violet-500/30'
                     : 'bg-green-500/10 text-green-400 border border-green-500/20'
