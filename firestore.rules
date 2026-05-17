@@ -102,11 +102,14 @@ service cloud.firestore {
     }
 
     // ===================================================
-    // 6. Host Applications (PUBLIC CREATE - ADMIN READ/WRITE)
+    // 6. Host Applications (PUBLIC CREATE/READ - ADMIN WRITE/DELETE)
+    //    - Anyone can create and read (for tracking status without login)
+    //    - Only admin can update status or delete
     // ===================================================
     match /applications/{doc} {
       allow create: if true;
-      allow read, update, delete: if isAdmin();
+      allow read: if true;
+      allow update, delete: if isAdmin();
     }
 
     // ===================================================
