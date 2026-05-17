@@ -505,7 +505,7 @@ export default function CreateTournamentPage() {
 
       const formattedDT = formatDateTimeForRTDB(dateTime);
 
-      // Build updates — Kotlin: getModifiedFields()
+      // Build updates — include ALL non-empty fields (even 0 values)
       const updates: Record<string, any> = { LastUpdated: now };
 
       if (title.trim()) updates.Title = title;
@@ -517,45 +517,45 @@ export default function CreateTournamentPage() {
       if (status) updates.Status = status;
       if (gameMode) updates.Mode = gameMode;
 
+      // SlotNumbers — allow 0 (user typed a valid number)
       const slots = parseInt(slotNumbers);
-      if (slots > 0) updates.SlotNumbers = slots;
+      if (!isNaN(slots)) updates.SlotNumbers = slots;
 
-      // ✅ RUPEES → PAISA for storage
+      // ✅ RUPEES → PAISA for storage — allow 0 (Free, no per-kill, no prize)
       const jf = parseFloat(joiningFee);
-      if (!isNaN(jf) && jf > 0) {
+      if (!isNaN(jf)) {
         updates.JoiningFee = rupeesToPaisa(jf);
-        console.log('💰 JoiningFee:', jf, '₹ →', updates.JoiningFee, 'paisa');
       }
 
       const rua = parseInt(referralUseAmount);
       if (!isNaN(rua)) updates.ReferralUseAmount = rua;
 
       const pk = parseFloat(perKill);
-      if (!isNaN(pk) && pk > 0) {
+      if (!isNaN(pk)) {
         updates.PerKill = rupeesToPaisa(pk);
-        console.log('💰 PerKill:', pk, '₹ →', updates.PerKill, 'paisa');
       }
 
       const pp = parseFloat(pricePool);
-      if (!isNaN(pp) && pp > 0) {
+      if (!isNaN(pp)) {
         updates.PricePool = rupeesToPaisa(pp);
-        console.log('💰 PricePool:', pp, '₹ →', updates.PricePool, 'paisa');
       }
 
       if (roomId.trim()) updates.RoomID = roomId;
       if (roomPassword.trim()) updates.RoomPassword = roomPassword;
       if (videoUrl.trim()) updates.VideoUrl = videoUrl;
 
-      // Update Meta (BannerUrl included) — Kotlin: updateSpecificTournamentFields()
+      // Update BOTH Meta and Details — parallel for speed
       const metaPath = `Tournaments/TournamentMeta/${updateType}/${updateId}`;
-      const metaSuccess = await rtdbPatch(metaPath, updates);
-      if (!metaSuccess) throw new Error('Meta update failed');
-
-      // Update Details (BannerUrl excluded) — same as Kotlin
+      const detailsPath = `Tournaments/TournamentDetails/${updateType}/${updateId}`;
       const detailsUpdates = { ...updates };
       delete detailsUpdates.BannerUrl;
-      const detailsPath = `Tournaments/TournamentDetails/${updateType}/${updateId}`;
-      const detailsSuccess = await rtdbPatch(detailsPath, detailsUpdates);
+
+      const [metaSuccess, detailsSuccess] = await Promise.all([
+        rtdbPatch(metaPath, updates),
+        rtdbPatch(detailsPath, detailsUpdates),
+      ]);
+
+      if (!metaSuccess) throw new Error('Meta update failed');
       if (!detailsSuccess) throw new Error('Details update failed');
 
       // Refresh current data
