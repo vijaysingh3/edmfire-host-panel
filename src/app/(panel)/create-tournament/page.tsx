@@ -104,16 +104,43 @@ function generateNewTournamentId(existingIds: string[]): string {
 }
 
 // ═══════════════════════════════════════════════════
-// DATETIME FORMAT — Kotlin me "YYYY/MM/DD HH:MM"
-// datetime-local input se convert karo
+// DATETIME FORMAT — "YYYY/MM/DD HH:MM AM/PM"
+// datetime-local input (24h) → 12-hour AM/PM for RTDB
 // ═══════════════════════════════════════════════════
 function formatDateTimeForRTDB(dtLocal: string): string {
-  // "2025-05-14T15:30" → "2025/05/14 15:30"
+  // "2025-05-14T15:30" → "2025/05/14 03:30 PM"
   if (!dtLocal) return '';
   const [date, time] = dtLocal.split('T');
-  if (!date) return dtLocal;
+  if (!date || !time) return dtLocal;
   const [y, m, d] = date.split('-');
-  return `${y}/${m}/${d}${time ? ' ' + time : ''}`;
+  const [hh, mm] = time.split(':');
+  const hour = parseInt(hh, 10);
+  const ampm = hour >= 12 ? 'PM' : 'AM';
+  const h12 = hour % 12 || 12;
+  return `${y}/${m}/${d} ${String(h12).padStart(2, '0')}:${mm} ${ampm}`;
+}
+
+// ═══════════════════════════════════════════════════
+// PARSE DATETIME — RTDB → datetime-local input
+// "2025/05/14 03:30 PM" → "2025-05-14T15:30"
+// Also handles old 24h format: "2025/05/14 15:30" → "2025-05-14T15:30"
+// ═══════════════════════════════════════════════════
+function parseRTDBDateTime(dtStr: string): string {
+  if (!dtStr) return '';
+  const trimmed = dtStr.trim();
+  const parts = trimmed.split(' ');
+  // parts: ["YYYY/MM/DD", "HH:MM", "AM"/"PM"] or ["YYYY/MM/DD", "HH:MM"]
+  if (parts.length < 2) return trimmed;
+  const datePart = parts[0];
+  const timePart = parts[1];
+  const ampm = parts[2] || '';
+  const [y, m, d] = datePart.split('/');
+  const [hh, mm] = timePart.split(':');
+  let hour = parseInt(hh, 10);
+  // Convert 12h AM/PM → 24h
+  if (ampm.toUpperCase() === 'PM' && hour !== 12) hour += 12;
+  if (ampm.toUpperCase() === 'AM' && hour === 12) hour = 0;
+  return `${y}-${m}-${d}T${String(hour).padStart(2, '0')}:${mm}`;
 }
 
 export default function CreateTournamentPage() {
@@ -423,16 +450,9 @@ export default function CreateTournamentPage() {
       setDescription(data.Description || '');
       setBannerUrl(data.BannerUrl || '');
 
-      // DateTime: RTDB se "YYYY/MM/DD HH:MM" aata hai, datetime-local ke liye convert
+      // DateTime: RTDB se "YYYY/MM/DD HH:MM AM/PM" aata hai, datetime-local ke liye convert
       const dtStr = data.DateTime || '';
-      if (dtStr.includes('/')) {
-        // "2025/05/14 15:30" → "2025-05-14T15:30"
-        const [datePart, timePart] = dtStr.split(' ');
-        const [y, m, d] = datePart.split('/');
-        setDateTime(`${y}-${m}-${d}T${timePart || ''}`);
-      } else {
-        setDateTime('');
-      }
+      setDateTime(dtStr.includes('/') ? parseRTDBDateTime(dtStr) : '');
 
       setSlotNumbers(String(data.SlotNumbers || ''));
 
@@ -715,7 +735,7 @@ export default function CreateTournamentPage() {
             <Label className="text-xs text-[oklch(0.70,0.04,290)] font-semibold">Date &amp; Time <span className="text-red-400">*</span></Label>
             <Input type="datetime-local" value={dateTime} onChange={(e) => setDateTime(e.target.value)}
               className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white h-12 rounded-xl" />
-            <p className="text-[10px] text-[oklch(0.40,0.04,290)]">Will be stored as YYYY/MM/DD HH:MM format</p>
+            <p className="text-[10px] text-[oklch(0.40,0.04,290)]">Stored as YYYY/MM/DD HH:MM AM/PM format</p>
           </div>
 
           {/* Map — Kotlin: spinnerMap */}
