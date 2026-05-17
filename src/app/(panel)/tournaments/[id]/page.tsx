@@ -626,14 +626,6 @@ export default function TournamentDetailPage() {
               </div>
             </div>
 
-            {/* Description */}
-            {details.description && (
-              <div className="p-3 rounded-xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.30,0.06,290)]">
-                <p className="text-[10px] text-[oklch(0.45,0.04,290)] mb-1">Description</p>
-                <p className="text-xs text-[oklch(0.65,0.04,290)] leading-relaxed">{details.description}</p>
-              </div>
-            )}
-
             {/* Refresh Button */}
             <button
               onClick={() => loadTournament(true)}
