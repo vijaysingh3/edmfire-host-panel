@@ -43,5 +43,5 @@ export const RC_KEYS = {
   RTDB_SECRET: 'RECYCLABLE_DB_SECRET',       // Firebase RTDB database secret (Kotlin: getDatabaseSecret())
   NOTIFY_JOINED_PLAYERS: 'notifyjoinedplayers', // FCM notification Cloud Function URL
   FUN_PRICE_DISTRIBUTION: 'Fun_pricedistribution', // Prize distribution Cloud Function URL
-  FUN_WITHDRAWAL_REQUEST: 'Fun_withdrawalrequest', // Host withdrawal request Cloud Function URL
+  FUN_WITHDRAWAL_REQUEST: 'Fun_hostsWithdrawal_Request', // Host withdrawal request Cloud Function URL
 } as const;

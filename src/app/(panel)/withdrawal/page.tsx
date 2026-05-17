@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { fetchRemoteConfig, getRemoteString, RC_KEYS } from '@/lib/remoteConfig';
-import { doc, onSnapshot, collection, query, orderBy, onSnapshot as colOnSnapshot } from 'firebase/firestore';
+import { doc, onSnapshot, collection, onSnapshot as colOnSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { toast } from 'sonner';
 
@@ -32,13 +32,15 @@ function formatCoins(paisa: number): string {
 // ═══════════════════════════════════════════════════
 interface WithdrawalItem {
   id: string;
-  bankDetail: string;        // UPI / Bank Account No.
-  amount: number;            // paisa
+  bankDetail: string;          // UPI / Bank Account No.
+  amount: number;              // paisa
   status: 'pending' | 'success' | 'completed' | 'failed';
-  createdAt: any;            // Firestore timestamp
+  requestedAt: any;            // Firestore timestamp
   processedAt?: any;
   transactionId?: string;
-  _raw?: Record<string, any>;
+  notes?: string;
+  walletBalanceBefore?: number;
+  walletBalanceAfter?: number;
 }
 
 // ═══════════════════════════════════════════════════
@@ -103,30 +105,40 @@ export default function WithdrawalPage() {
   }, [user, authLoading]);
 
   // ═══════════════════════════════════════════════════
-  // REALTIME WITHDRAWAL HISTORY — hosts/{uid}/withdrawalRequests
+  // REALTIME WITHDRAWAL HISTORY — hosts/{uid}/transactionHistory
+  // Filter transactionType === 'withdrawal', max 3
   // ═══════════════════════════════════════════════════
   useEffect(() => {
     if (authLoading || !user) return;
 
-    const colRef = collection(db, 'hosts', user.uid, 'withdrawalRequests');
-    const q = query(colRef, orderBy('createdAt', 'desc'));
+    const colRef = collection(db, 'hosts', user.uid, 'transactionHistory');
 
-    const unsubscribe = colOnSnapshot(q, (snap) => {
+    const unsubscribe = colOnSnapshot(colRef, (snap) => {
       const items: WithdrawalItem[] = [];
       snap.forEach((doc) => {
         const data = doc.data();
+        if (data.transactionType !== 'withdrawal') return;
         items.push({
           id: doc.id,
-          bankDetail: data.bankDetail || data.upiId || '',
+          bankDetail: data.bankDetail || '',
           amount: data.amount || 0,
-          status: data.status || data.paymentStatus || 'pending',
-          createdAt: data.createdAt,
+          status: data.status || 'pending',
+          requestedAt: data.requestedAt,
           processedAt: data.processedAt,
           transactionId: data.transactionId || '',
-          _raw: data,
+          notes: data.notes || '',
+          walletBalanceBefore: data.walletBalanceBefore || 0,
+          walletBalanceAfter: data.walletBalanceAfter || 0,
         });
       });
-      setWithdrawals(items);
+      // Sort by requestedAt (Firestore timestamp) descending
+      items.sort((a, b) => {
+        const ta = a.requestedAt?.toMillis?.() || 0;
+        const tb = b.requestedAt?.toMillis?.() || 0;
+        return tb - ta;
+      });
+      // Max 3
+      setWithdrawals(items.slice(0, 3));
       setLoading(false);
     }, (err) => {
       console.error('Withdrawal snapshot error:', err);
@@ -337,7 +349,7 @@ export default function WithdrawalPage() {
           <h2 className="text-lg font-bold bg-gradient-to-r from-yellow-400 to-amber-400 bg-clip-text text-transparent">
             Recent Withdrawals
           </h2>
-          <p className="text-[11px] text-[oklch(0.45,0.04,290)] mt-0.5">{withdrawals.length} total requests</p>
+          <p className="text-[11px] text-[oklch(0.45,0.04,290)] mt-0.5">Latest 3 requests</p>
         </div>
 
         {/* Withdrawal List */}
@@ -356,12 +368,12 @@ export default function WithdrawalPage() {
           ) : (
             withdrawals.map((w) => {
               const st = statusConfig[w.status] || statusConfig.pending;
-              const ts = w.createdAt?.toDate?.() 
-                ? w.createdAt.toDate().toLocaleString('en-IN', { 
-                    day: '2-digit', month: 'short', year: '2-digit', 
-                    hour: '2-digit', minute: '2-digit', hour12: true 
+              const ts = w.requestedAt?.toDate?.()
+                ? w.requestedAt.toDate().toLocaleString('en-IN', {
+                    day: '2-digit', month: 'short', year: '2-digit',
+                    hour: '2-digit', minute: '2-digit', hour12: true
                   })
-                : (typeof w.createdAt === 'string' ? w.createdAt : '');
+                : '';
 
               return (
                 <div key={w.id} className="rounded-xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.25,0.05,290)] p-3">
@@ -393,10 +405,21 @@ export default function WithdrawalPage() {
                         <span className="text-[10px] font-mono text-[oklch(0.55,0.04,290)] truncate max-w-[65%]">{w.transactionId}</span>
                       </div>
                     )}
+                    {w.walletBalanceAfter > 0 && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-[oklch(0.45,0.04,290)]">Balance After</span>
+                        <span className="text-[10px] font-medium text-green-400">{formatCoins(w.walletBalanceAfter)}</span>
+                      </div>
+                    )}
                     {ts && (
                       <div className="flex items-center justify-between">
                         <span className="text-[10px] text-[oklch(0.45,0.04,290)]">Requested</span>
                         <span className="text-[10px] text-[oklch(0.50,0.04,290)]">{ts}</span>
+                      </div>
+                    )}
+                    {w.notes && (
+                      <div className="pt-1.5 border-t border-[oklch(0.25,0.05,290)]">
+                        <p className="text-[10px] text-[oklch(0.40,0.04,290)] italic leading-relaxed">{w.notes}</p>
                       </div>
                     )}
                   </div>
