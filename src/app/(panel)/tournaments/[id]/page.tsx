@@ -24,7 +24,7 @@ import {
   X,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
-import { fetchRemoteConfig, RC_KEYS } from '@/lib/remoteConfig';
+import { getRemoteString, RC_KEYS } from '@/lib/remoteConfig';
 import { rtdbGet } from '@/lib/rtdb';
 import { toast } from 'sonner';
 
@@ -312,19 +312,29 @@ export default function TournamentDetailPage() {
     else setLoading(true);
 
     try {
-      await fetchRemoteConfig();
+      // No fetchRemoteConfig() needed — values are already cached from list page
+      const rtdbUrl = getRemoteString(RC_KEYS.RTDB_URL);
+      const rtdbSecret = getRemoteString(RC_KEYS.RTDB_SECRET);
 
-      // Fetch ONLY JoinedPlayers node — fast, lightweight
+      if (!rtdbUrl || !rtdbSecret) {
+        toast.error('Config error');
+        setPlayers([]);
+        return;
+      }
+
+      // Fetch ONLY JoinedPlayers sub-node — single REST call, fast
       const joinedPath = `Tournaments/TournamentDetails/${type}/${id}/JoinedPlayers`;
       const rawData = await rtdbGet(joinedPath);
 
-      if (rawData && typeof rawData === 'object' && Object.keys(rawData).length > 0) {
+      if (rawData === null) {
+        // Node doesn't exist at all
+        setPlayers([]);
+      } else if (typeof rawData === 'object') {
+        // Node exists — parse players (handles both array & object formats)
         const parsed = parseJoinedPlayers(rawData, type);
         setPlayers(parsed);
-        if (parsed.length === 0) {
-          toast.info('No valid player data found in JoinedPlayers');
-        }
       } else {
+        // Unexpected format
         setPlayers([]);
       }
     } catch (e: any) {
