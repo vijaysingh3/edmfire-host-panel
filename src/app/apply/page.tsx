@@ -29,17 +29,31 @@ import {
   Check,
   AlertCircle,
   ShieldCheck,
+  Copy,
+  Ticket,
 } from 'lucide-react';
 import Image from 'next/image';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
-const MAX_IMAGE_SIZE = 1.5 * 1024 * 1024; // 1.5MB
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
 
 const TOTAL_STEPS = 7;
 
 // email regex pattern
 const EMAIL_REGEX = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/;
+
+// Helper: get or create device ID from localStorage
+function getOrCreateDeviceId(): string {
+  if (typeof window === 'undefined') return '';
+  const key = 'edmf_device_id';
+  let id = localStorage.getItem(key);
+  if (!id) {
+    id = 'DEV_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 10);
+    localStorage.setItem(key, id);
+  }
+  return id;
+}
 
 // Helper: detect device info from browser (safe for SSR)
 function getDeviceInfo(): { type: string; os: string; browser: string; memory: string; cores: number; screen: string } | null {
@@ -172,6 +186,9 @@ export default function ApplyPage() {
   // submit progress stages
   const [submitStage, setSubmitStage] = useState<string>('');
 
+  // tracking token (Firestore doc ID)
+  const [trackingToken, setTrackingToken] = useState('');
+
   const updateField = (field: keyof FormData, value: string | string[]) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
@@ -279,8 +296,8 @@ export default function ApplyPage() {
   // Helper: image size color indicator
   const getImageSizeColor = (sizeInBytes: number): { color: string; bg: string; label: string } => {
     const mb = sizeInBytes / (1024 * 1024);
-    if (mb <= 0.5) return { color: 'text-green-400', bg: 'bg-green-500/80', label: 'Good size' };
-    if (mb <= 1.0) return { color: 'text-amber-400', bg: 'bg-amber-500/80', label: 'Medium size' };
+    if (mb <= 1.0) return { color: 'text-green-400', bg: 'bg-green-500/80', label: 'Good size' };
+    if (mb <= 3.0) return { color: 'text-amber-400', bg: 'bg-amber-500/80', label: 'Medium size' };
     return { color: 'text-red-400', bg: 'bg-red-500/80', label: 'Near limit' };
   };
 
@@ -293,7 +310,7 @@ export default function ApplyPage() {
       const file = e.target.files?.[0];
       if (!file) return;
       if (file.size > MAX_IMAGE_SIZE) {
-        toast.error('Image too large!', { description: `Max size is 1.5MB. Your image is ${(file.size / 1024 / 1024).toFixed(1)}MB. Try compressing or selecting another image.` });
+        toast.error('Image too large!', { description: `Max size is 5MB. Your image is ${(file.size / 1024 / 1024).toFixed(1)}MB. Try compressing or selecting another image.` });
         return;
       }
       const sizeInfo = getImageSizeColor(file.size);
@@ -431,8 +448,14 @@ export default function ApplyPage() {
       if (ffScreenshotUrl) applicationData.ffScreenshotUrl = ffScreenshotUrl;
       if (selfieUrl) applicationData.selfieUrl = selfieUrl;
 
+      // Save device ID for future status tracking
+      applicationData.deviceId = getOrCreateDeviceId();
+
       const docRef = await addDoc(collection(db, 'applications'), applicationData);
       console.log('🔥 [Submit] SUCCESS! Doc ID:', docRef.id);
+
+      // Save tracking token for success screen
+      setTrackingToken(docRef.id);
 
       setSubmitStage('done');
       await new Promise(r => setTimeout(r, 800));
@@ -588,6 +611,32 @@ export default function ApplyPage() {
               EDMFire team will review your application and contact you on WhatsApp within 24-48 hours.
             </p>
           </div>
+
+          {/* Tracking Token Card */}
+          {trackingToken && (
+            <div className="rounded-xl bg-violet-500/10 border border-violet-500/25 p-4 space-y-2">
+              <div className="flex items-center justify-center gap-2">
+                <Ticket className="w-4 h-4 text-violet-400" />
+                <p className="text-xs font-bold text-violet-300">Your Tracking Token</p>
+              </div>
+              <div className="flex items-center justify-center gap-2">
+                <p className="text-lg font-mono font-extrabold text-white tracking-wider">{trackingToken}</p>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(trackingToken);
+                    toast.success('Copied!');
+                  }}
+                  className="p-1.5 rounded-lg bg-violet-500/20 hover:bg-violet-500/30 transition-colors"
+                >
+                  <Copy className="w-3.5 h-3.5 text-violet-300" />
+                </button>
+              </div>
+              <p className="text-[10px] text-[oklch(0.50,0.04,290)]">
+                Save this token. You can check your application status later using this token, your phone number, or email.
+              </p>
+            </div>
+          )}
+
           <div className="flex gap-3">
             <a
               href="/login"
@@ -596,7 +645,7 @@ export default function ApplyPage() {
               Go to Login
             </a>
             <button
-              onClick={() => { setIsSubmitted(false); setFormData(initialFormData); setStep(1); setCompletedSteps(new Set()); setAgreements([false, false, false]); setFfScreenshot(null); setSelfie(null); setFfPreview(null); setSelfiePreview(null); }}
+              onClick={() => { setIsSubmitted(false); setTrackingToken(''); setFormData(initialFormData); setStep(1); setCompletedSteps(new Set()); setAgreements([false, false, false]); setFfScreenshot(null); setSelfie(null); setFfPreview(null); setSelfiePreview(null); }}
               className="flex-1 h-12 rounded-xl bg-[oklch(0.22,0.04,290)] border border-[oklch(0.30,0.06,290)] text-[oklch(0.70,0.04,290)] font-medium"
             >
               New Application
@@ -872,21 +921,21 @@ export default function ApplyPage() {
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     State <span className="text-red-400">*</span>
                   </Label>
-                  <Input value={formData.state} onChange={(e) => updateField('state', e.target.value)} placeholder="e.g. Maharashtra" className={inputClass} />
+                  <Input value={formData.state} onChange={(e) => updateField('state', e.target.value)} placeholder=" " className={inputClass} />
                   <FieldGuide text="Enter your state name" />
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     District <span className="text-red-400">*</span>
                   </Label>
-                  <Input value={formData.district} onChange={(e) => updateField('district', e.target.value)} placeholder="e.g. Pune" className={inputClass} />
+                  <Input value={formData.district} onChange={(e) => updateField('district', e.target.value)} placeholder=" " className={inputClass} />
                   <FieldGuide text="Enter your district name" />
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs text-[oklch(0.70,0.04,290)]">
                     Village / Town / City <span className="text-red-400">*</span>
                   </Label>
-                  <Input value={formData.city} onChange={(e) => updateField('city', e.target.value)} placeholder="e.g. Shivajinagar" className={inputClass} />
+                  <Input value={formData.city} onChange={(e) => updateField('city', e.target.value)} placeholder=" " className={inputClass} />
                   <FieldGuide text="Enter your village, town or city name" />
                 </div>
               </div>
