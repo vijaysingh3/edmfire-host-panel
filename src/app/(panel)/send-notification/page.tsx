@@ -216,10 +216,31 @@ export default function SendNotificationPage() {
       appendLog('FCM requires title & body', 'ERROR');
       return;
     }
+    if (!user) {
+      appendLog('Not logged in', 'ERROR');
+      return;
+    }
 
     const funUrl = NOTIFY_JOINED_PLAYERS_URL;
     if (!funUrl) {
       appendLog('Function URL missing — check Vercel ENV: NEXT_PUBLIC_NOTIFY_JOINED_PLAYERS', 'ERROR');
+      return;
+    }
+
+    // ═══ HostUID Check — sirf apni tournament ═══
+    appendLog('Verifying tournament ownership...', 'INFO');
+    try {
+      const data = await rtdbGet(`Tournaments/TournamentDetails/${tournamentType}/${id}`);
+      if (data) {
+        const hostUID = data.HostUID || data.hostUID || '';
+        if (hostUID !== user.uid) {
+          appendLog('ACCESS DENIED: This tournament belongs to another host', 'ERROR');
+          return;
+        }
+        appendLog('Ownership verified', 'SUCCESS');
+      }
+    } catch (e: any) {
+      appendLog(`Ownership check failed: ${e.message}`, 'ERROR');
       return;
     }
 

@@ -644,7 +644,7 @@ export default function ResultsPage() {
   };
 
   const handleDeleteConfirm = async () => {
-    if (!deleteTarget) return;
+    if (!deleteTarget || !isTournamentValid) return;
     if (deleteUidInput.trim() !== deleteTarget.inGameUID) {
       toast.error('Incorrect UID!');
       return;
