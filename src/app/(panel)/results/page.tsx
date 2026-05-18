@@ -12,6 +12,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { toast } from 'sonner';
+import { useAuth } from '@/context/AuthContext';
 import { rtdbGet, rtdbPut, rtdbPatch, rtdbDelete } from '@/lib/rtdb';
 import {
   Target,
@@ -132,6 +133,7 @@ function parsePlayerData(playerObj: any, playerKey: string, currentType: string,
 }
 
 export default function ResultsPage() {
+  const { user } = useAuth();
   const logEndRef = useRef<HTMLDivElement>(null);
   const deleteConfirmRef = useRef<HTMLInputElement>(null);
   const [deleteTarget, setDeleteTarget] = useState<PlayerData | null>(null);
@@ -275,6 +277,10 @@ export default function ResultsPage() {
       toast.error('Config not ready. Wait.');
       return;
     }
+    if (!user) {
+      toast.error('Not logged in');
+      return;
+    }
     const id = tournamentId.trim();
     if (!id || id === TOURNAMENT_ID_PREFIX) {
       toast.error('Please enter Tournament ID');
@@ -290,6 +296,21 @@ export default function ResultsPage() {
       toast.error(`Tournament '${id}' not found in ${tournamentType}`);
       resetTournamentState();
       return;
+    }
+
+    // ═══ HostUID Check — sirf apni tournament ═══
+    try {
+      const detailsData = await rtdbGet(`Tournaments/TournamentDetails/${tournamentType}/${id}`);
+      if (detailsData) {
+        const hostUID = detailsData.HostUID || detailsData.hostUID || '';
+        if (hostUID !== user.uid) {
+          toast.error('ACCESS DENIED: This tournament belongs to another host');
+          resetTournamentState();
+          return;
+        }
+      }
+    } catch {
+      // Meta exists but details might not — allow continue
     }
 
     setIsTournamentValid(true);

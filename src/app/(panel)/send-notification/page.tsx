@@ -155,6 +155,11 @@ export default function SendNotificationPage() {
       return;
     }
 
+    if (!user) {
+      appendLog('Not logged in', 'ERROR');
+      return;
+    }
+
     setRefreshing(true);
     appendLog(`Checking: ${tournamentType}/${id}`, 'INFO');
 
@@ -164,6 +169,14 @@ export default function SendNotificationPage() {
 
       if (!data || data === null) {
         appendLog('Tournament not found', 'ERROR');
+        setRefreshing(false);
+        return;
+      }
+
+      // ═══ HostUID Check — sirf apni tournament ═══
+      const hostUID = data.HostUID || data.hostUID || '';
+      if (hostUID !== user.uid) {
+        appendLog('ACCESS DENIED: This tournament belongs to another host', 'ERROR');
         setRefreshing(false);
         return;
       }

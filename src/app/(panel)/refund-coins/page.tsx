@@ -306,6 +306,14 @@ export default function RefundCoinsPage() {
         return;
       }
 
+      // ═══ HostUID Check — sirf apni tournament ═══
+      const hostUID = data.HostUID || data.hostUID || '';
+      if (user && hostUID && hostUID !== user.uid) {
+        toast.error('ACCESS DENIED: This tournament belongs to another host');
+        setRefreshing(false);
+        return;
+      }
+
       const fee = data.JoiningFee || 0;
       setJoiningFeePaisa(fee);
 
