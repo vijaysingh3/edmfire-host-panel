@@ -267,19 +267,52 @@ export default function RefundCoinsPage() {
       const ids = parseTournamentMetaIds(data, tournamentType);
       tournamentIdsMap.current[tournamentType] = ids;
 
+      let selectedId = previousId;
       if (ids.length > 0) {
         if (ids.includes(previousId)) {
+          selectedId = previousId;
           setTournamentId(previousId);
         } else {
+          selectedId = ids[0];
           setTournamentId(ids[0]);
         }
         setIdEnabled(true);
       } else {
+        selectedId = '';
         setTournamentId('');
         setIdEnabled(false);
       }
 
-      await fetchTournamentAndPlayersData();
+      // Use selectedId directly (React state is async — tournamentId not updated yet)
+      if (!selectedId) return;
+
+      setRefreshing(true);
+      setPlayers([]);
+
+      const tData = await rtdbGet(basePath(tournamentType, selectedId));
+
+      if (!tData || tData === null) {
+        toast.error('Tournament not found');
+        setRefreshing(false);
+        return;
+      }
+
+      // ═══ HostUID Check — sirf apni tournament ═══
+      const hostUID = tData.HostUID || tData.hostUID || '';
+      if (user && hostUID && hostUID !== user.uid) {
+        toast.error('ACCESS DENIED: This tournament belongs to another host');
+        setRefreshing(false);
+        return;
+      }
+
+      const fee = tData.JoiningFee || 0;
+      setJoiningFeePaisa(fee);
+
+      if (tData.JoinedPlayers) {
+        parseJoinedPlayers(tData.JoinedPlayers, tournamentType, selectedId, fee);
+      } else {
+        toast.warning('No players found');
+      }
     } catch (e: any) {
       toast.error('Refresh failed');
     } finally {
