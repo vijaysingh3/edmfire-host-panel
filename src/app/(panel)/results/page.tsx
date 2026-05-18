@@ -12,7 +12,6 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { fetchRemoteConfig, getRemoteString, RC_KEYS } from '@/lib/remoteConfig';
 import { rtdbGet, rtdbPut, rtdbPatch, rtdbDelete } from '@/lib/rtdb';
 import {
   Target,
@@ -200,17 +199,8 @@ export default function ResultsPage() {
   useEffect(() => {
     const init = async () => {
       setLoading(true);
-      await fetchRemoteConfig();
-      const rtdbUrl = getRemoteString(RC_KEYS.RTDB_URL);
-      const rtdbSecret = getRemoteString(RC_KEYS.RTDB_SECRET);
-      if (rtdbUrl && rtdbSecret) {
-        setConfigReady(true);
-        console.log('🎯 [Results] Config ready');
-        loadTournamentIds();
-      } else {
-        toast.error('Remote Config not ready');
-        setLoading(false);
-      }
+      setConfigReady(true);
+      loadTournamentIds();
     };
     init();
   }, []);
@@ -270,10 +260,8 @@ export default function ResultsPage() {
         idMap[type.value] = ids;
       }
       setTournamentIdsMap(idMap);
-      console.log('🎯 [Results] Tournament IDs loaded:', idMap);
       setLoading(false);
     } catch (e: any) {
-      console.error('🎯 [Results] Failed to load IDs:', e);
       toast.error('Failed to load tournaments');
       setLoading(false);
     }
@@ -305,7 +293,6 @@ export default function ResultsPage() {
     }
 
     setIsTournamentValid(true);
-    console.log(`🎯 [Results] Validated: ${tournamentType} / ${id}`);
     fetchTournamentInfo();
     loadResultStatus();
   };
@@ -329,11 +316,9 @@ export default function ResultsPage() {
         setJoinedPlayersCount(joined);
         setCurrentPerKillPaisa(perKill);
         setIsAutoCalcEnabled(perKill > 0);
-        console.log(`🎯 [Results] Mode: ${mode}, PrizePool: ${pool}, Players: ${joined}, PerKill: ${perKill} paisa`);
       }
       fetchPlayersData();
     } catch (e: any) {
-      console.error('🎯 [Results] Tournament info error:', e);
       fetchPlayersData();
     }
   };
@@ -351,12 +336,10 @@ export default function ResultsPage() {
         const status = data === 'true';
         setResultPublished(status);
         setShowResultToggle(true);
-        console.log(`🎯 [Results] ResultStatus: ${status}`);
       } else {
         setShowResultToggle(false);
       }
     } catch (e: any) {
-      console.error('🎯 [Results] ResultStatus error:', e);
       setShowResultToggle(false);
     } finally {
       setResultLoading(false);
@@ -417,7 +400,6 @@ export default function ResultsPage() {
       }
       checkAndUpdateRevertButton();
     } catch (e: any) {
-      console.error('🎯 [Results] Players fetch error:', e);
       toast.error(`Failed to fetch players: ${e.message}`);
     } finally {
       setLoading(false);
@@ -473,7 +455,6 @@ export default function ResultsPage() {
 
       // Step 2: DELETE WinnerList
       await rtdbDelete(getWinnerListPath(tournamentType, id));
-      console.log('🎯 [Results] WinnerList deleted');
 
       // Step 3: PATCH all JoinedPlayers PaymentStatus = false
       const data = await rtdbGet(getJoinedPlayersPath(tournamentType, id));
@@ -515,12 +496,10 @@ export default function ResultsPage() {
         completed++;
       }
 
-      console.log(`🎯 [Results] ${completed} players reverted`);
       toast.success(`Revert complete! ${completed} players reset + WinnerList cleared`);
       fetchPlayersData();
       loadResultStatus();
     } catch (e: any) {
-      console.error('🎯 [Results] Revert error:', e);
       toast.error(`Revert failed: ${e.message}`);
     } finally {
       setLoading(false);
@@ -533,7 +512,6 @@ export default function ResultsPage() {
   // ═══════════════════════════════════════════════
   const updatePlayer = async (player: PlayerData) => {
     setUpdatingPlayer(player.playerKey);
-    console.log(`🎯 [Results] Updating: ${player.inGameName}`);
 
     try {
       // Auto-calc coins if enabled and not manually edited
@@ -561,7 +539,6 @@ export default function ResultsPage() {
       const success = await rtdbPatch(fullPath, playerData);
 
       if (success) {
-        console.log(`🎯 [Results] Player updated: ${player.inGameName}, Coins: ${player.coinsEarned} paisa`);
         // Update WinnerList
         await updateWinnerList(player);
         fetchPlayersData();
@@ -570,7 +547,6 @@ export default function ResultsPage() {
         toast.error('Failed to update player');
       }
     } catch (e: any) {
-      console.error('🎯 [Results] Update error:', e);
       toast.error(`Update failed: ${e.message}`);
     } finally {
       setUpdatingPlayer(null);
@@ -612,7 +588,6 @@ export default function ResultsPage() {
 
       if (existingKey !== null) {
         await rtdbPatch(`${winnerListPath}/${existingKey}`, winnerData);
-        console.log(`🎯 [Results] Winner updated: ${player.inGameName}`);
       } else {
         // Find next key
         let nextKey = 1;
@@ -633,10 +608,8 @@ export default function ResultsPage() {
           }
         }
         await rtdbPut(`${winnerListPath}/${nextKey}`, winnerData);
-        console.log(`🎯 [Results] Winner created at key ${nextKey}: ${player.inGameName}`);
       }
     } catch (e: any) {
-      console.error('🎯 [Results] WinnerList error:', e);
     }
   };
 
@@ -683,7 +656,6 @@ export default function ResultsPage() {
         toast.error('Failed to delete player');
       }
     } catch (e: any) {
-      console.error('🎯 [Results] Delete error:', e);
       toast.error(`Delete failed: ${e.message}`);
     } finally {
       setLoading(false);

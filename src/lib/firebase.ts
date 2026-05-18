@@ -13,24 +13,12 @@ const firebaseConfig = {
   measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID,
 };
 
-// Debug: Check if env vars are loaded
-console.log('🔥 [Firebase Init] Config check:', {
-  hasApiKey: !!firebaseConfig.apiKey,
-  hasProjectId: !!firebaseConfig.projectId,
-  apiKey: firebaseConfig.apiKey ? firebaseConfig.apiKey.slice(0, 8) + '...' : 'MISSING',
-  projectId: firebaseConfig.projectId || 'MISSING',
-  authDomain: firebaseConfig.authDomain || 'MISSING',
-});
-
 // Initialize Firebase (prevent re-initialization in dev/hot-reload)
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
-console.log('🔥 [Firebase Init] App initialized:', app.name);
 
 // Services
 export const db = getFirestore(app);
 export const auth = getAuth(app);
 export const storage = getStorage(app);
-
-console.log('🔥 [Firebase Init] Firestore db ready, app:', app.options.projectId);
 
 export default app;

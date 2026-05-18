@@ -14,7 +14,6 @@ import {
 } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { useAuth } from '@/context/AuthContext';
-import { fetchRemoteConfig, RC_KEYS } from '@/lib/remoteConfig';
 import { rtdbGet, rtdbPut, rtdbPatch } from '@/lib/rtdb';
 import {
   collection,
@@ -204,7 +203,6 @@ export default function CreateTournamentPage() {
       setHostTournaments(grouped);
       return grouped;
     } catch (e: any) {
-      console.error('❌ [Tournament] Load myMatches error:', e);
       toast.error('Failed to load tournaments', { description: e.message });
       return {};
     }
@@ -214,9 +212,6 @@ export default function CreateTournamentPage() {
   useEffect(() => {
     if (authLoading) return;
     const init = async () => {
-      await fetchRemoteConfig();
-      const rtdbUrl = RC_KEYS.RTDB_URL;
-      // Check if RTDB URL is configured (check via getRemoteString indirectly)
       setConfigReady(true);
     };
     init();
@@ -279,13 +274,11 @@ export default function CreateTournamentPage() {
       // Step 1: Get all existing IDs from RTDB — Kotlin: getAllTournamentIds()
       const allIdsData = await rtdbGet('AllTournamentsID');
       const existingIds = allIdsData ? Object.keys(allIdsData) : [];
-      console.log('🎯 [Tournament] Existing IDs:', existingIds.length);
 
       // Step 2: Generate new ID — Kotlin: TournamentIdGenerator.generateNewTournamentId()
       const newId = existingIds.length > 0
         ? generateNewTournamentId(existingIds)
         : 'EDM_100';
-      console.log('🎯 [Tournament] Generated ID:', newId);
       setGeneratedId(newId);
 
       // Step 3: Register new ID in RTDB — Kotlin: addNewTournamentId()
@@ -309,9 +302,6 @@ export default function CreateTournamentPage() {
       const perKillPaisa = rupeesToPaisa(parseFloat(perKill) || 0);
       const pricePoolPaisa = rupeesToPaisa(parseFloat(pricePool) || 0);
 
-      console.log('💰 [Tournament] JoiningFee:', joiningFee, '₹ →', joiningFeePaisa, 'paisa');
-      console.log('💰 [Tournament] PerKill:', perKill, '₹ →', perKillPaisa, 'paisa');
-      console.log('💰 [Tournament] PricePool:', pricePool, '₹ →', pricePoolPaisa, 'paisa');
 
       const formattedDT = formatDateTimeForRTDB(dateTime);
 
@@ -363,7 +353,7 @@ export default function CreateTournamentPage() {
         counts[tournamentType] = (counts[tournamentType] || 0) + 1;
         await rtdbPut('Tournaments/TournamentsCount', counts);
       } catch (e) {
-        console.warn('⚠️ [Tournament] Count update failed, continuing...', e);
+        // count update failed, continuing
       }
 
       // Step 8: Save reference to Firestore — hosts/{hostId}/myMatches
@@ -372,12 +362,10 @@ export default function CreateTournamentPage() {
         tournamentType: tournamentType,
       });
 
-      console.log('✅ [Tournament] Created:', newId);
       toast.success(`Tournament Created!`, { description: `ID: ${newId}` });
       clearForm();
 
     } catch (e: any) {
-      console.error('❌ [Tournament] Create error:', e);
       toast.error('Creation Failed', { description: e.message });
     } finally {
       setLoading(false);
@@ -442,7 +430,6 @@ export default function CreateTournamentPage() {
         return;
       }
 
-      console.log('✅ [Tournament] Loaded:', updateType, updateId);
       setCurrentTournamentData(data);
 
       // Populate form — Kotlin: populateForm()
@@ -479,7 +466,6 @@ export default function CreateTournamentPage() {
       toast.success('Tournament loaded!', { description: `ID: ${updateId}` });
 
     } catch (e: any) {
-      console.error('❌ [Tournament] Load error:', e);
       toast.error('Load Failed', { description: e.message });
     } finally {
       setLoading(false);
@@ -565,7 +551,6 @@ export default function CreateTournamentPage() {
       toast.success('Tournament Updated!', { description: `ID: ${updateId}` });
 
     } catch (e: any) {
-      console.error('❌ [Tournament] Update error:', e);
       toast.error('Update Failed', { description: e.message });
     } finally {
       setLoading(false);

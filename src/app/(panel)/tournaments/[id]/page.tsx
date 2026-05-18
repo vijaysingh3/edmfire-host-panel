@@ -24,7 +24,6 @@ import {
   X,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
-import { getRemoteString, RC_KEYS } from '@/lib/remoteConfig';
 import { rtdbGet } from '@/lib/rtdb';
 import { toast } from 'sonner';
 
@@ -312,15 +311,7 @@ export default function TournamentDetailPage() {
     else setLoading(true);
 
     try {
-      // No fetchRemoteConfig() needed — values are already cached from list page
-      const rtdbUrl = getRemoteString(RC_KEYS.RTDB_URL);
-      const rtdbSecret = getRemoteString(RC_KEYS.RTDB_SECRET);
-
-      if (!rtdbUrl || !rtdbSecret) {
-        toast.error('Config error');
-        setPlayers([]);
-        return;
-      }
+      // RTDB operations are proxied via server-side API route — no client config needed
 
       // Fetch ONLY JoinedPlayers sub-node — single REST call, fast
       const joinedPath = `Tournaments/TournamentDetails/${type}/${id}/JoinedPlayers`;

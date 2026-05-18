@@ -269,7 +269,6 @@ export default function ApplyPage() {
         toast.info('No application found', { description: 'No matching application found. Check your input and try again.' });
       }
     } catch (err: any) {
-      console.error('Track search error:', err);
       toast.error('Search failed', { description: err.message || 'Something went wrong' });
     } finally {
       setTrackLoading(false);
@@ -443,7 +442,6 @@ export default function ApplyPage() {
       images.push({ base64 });
     }
 
-    console.log('📸 [Upload] Sending', images.length, 'image(s) to Cloud Function...');
     const response = await fetch(uploadUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -456,7 +454,6 @@ export default function ApplyPage() {
     }
 
     const result = await response.json();
-    console.log('📸 [Upload] Response:', JSON.stringify(result));
 
     if (!result.success || result.successful === 0) {
       throw new Error('Image upload failed. Please try again.');
@@ -472,7 +469,6 @@ export default function ApplyPage() {
     }
 
     setIsSubmitting(true);
-    console.log('🔥 [Submit] Started — uploading images via Cloud Function...');
 
     try {
       // Multi-stage submit progress
@@ -495,13 +491,10 @@ export default function ApplyPage() {
           if (item.label === 'screenshot') ffScreenshotUrl = item.url;
           if (item.label === 'selfie') selfieUrl = item.url;
         }
-        console.log('📸 [Upload] Screenshot URL:', ffScreenshotUrl);
-        console.log('📸 [Upload] Selfie URL:', selfieUrl);
         setUploadingImage(null);
       }
 
       setSubmitStage('saving');
-      console.log('🔥 [Submit] Saving to Firestore...');
 
       const applicationData: Record<string, any> = {
         fullName: formData.fullName.trim(),
@@ -535,7 +528,6 @@ export default function ApplyPage() {
       applicationData.deviceId = getOrCreateDeviceId();
 
       const docRef = await addDoc(collection(db, 'applications'), applicationData);
-      console.log('🔥 [Submit] SUCCESS! Doc ID:', docRef.id);
 
       // Save tracking token for success screen
       setTrackingToken(docRef.id);
@@ -549,7 +541,6 @@ export default function ApplyPage() {
         description: 'EDMFire team will review your application soon.',
       });
     } catch (error: any) {
-      console.error('🔥 [ERROR] Submission failed:', error);
       setSubmitStage('');
       toast.error('Submission Failed', {
         description: error?.message || 'Something went wrong. Please try again.',
@@ -583,9 +574,7 @@ export default function ApplyPage() {
         navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 10000 });
       });
       const { latitude, longitude } = pos.coords;
-      console.log('📍 [Location] GPS:', latitude, longitude);
       const location = await reverseGeocode(latitude, longitude);
-      console.log('📍 [Location] Reverse geocode:', location);
       if (location.state || location.district || location.city) {
         setFormData(prev => ({
           ...prev,
@@ -598,7 +587,6 @@ export default function ApplyPage() {
         toast.error('Could not determine your location. Please fill manually.');
       }
     } catch (err: any) {
-      console.error('📍 [Location] Error:', err.message);
       if (err.code === 1) {
         toast.error('Location permission denied. Please fill manually.');
       } else if (err.code === 2) {
@@ -618,7 +606,6 @@ export default function ApplyPage() {
     setIsDetectingDevice(true);
     try {
       const info = getDeviceInfo();
-      console.log('📱 [Device] Raw info:', info);
 
       if (!info) {
         toast.error('Device detection not supported in this browser.');
@@ -658,11 +645,9 @@ export default function ApplyPage() {
 
       setFormData(prev => ({ ...prev, ...updates }));
 
-      console.log('📱 [Device] Applied updates:', updates);
       const details = [info.type, info.os, info.browser, info.memory ? `RAM: ${info.memory}` : '', `${info.cores} cores`, info.screen].filter(Boolean).join(' | ');
       toast.success('Device detected!', { description: details });
     } catch (err: any) {
-      console.error('📱 [Device] Error:', err);
       toast.error('Could not detect device info.');
     } finally {
       setIsDetectingDevice(false);

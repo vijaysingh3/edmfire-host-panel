@@ -60,7 +60,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       return null;
     } catch (err) {
-      console.error('🔥 [Auth] Firestore fetch error:', err);
       return null;
     }
   };
@@ -68,7 +67,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Firebase Auth state listener — page refresh pe bhi login rahega
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      console.log('🔥 [Auth] State changed:', firebaseUser?.email || 'no user');
       if (firebaseUser) {
         setUser(firebaseUser);
         // Firestore se host data fetch karo
@@ -78,7 +76,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setIsAuthenticated(true);
         } else {
           // host not found ya verified nahi hai
-          console.log('🔥 [Auth] Host not verified or not found, logging out...');
           await signOut(auth);
           setUser(null);
           setHostData(null);
@@ -101,8 +98,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Firebase Auth se sign in
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const firebaseUser = userCredential.user;
-      console.log('🔥 [Auth] Firebase sign-in success:', firebaseUser.email);
-
       // Firestore se host document check karo
       const hostDoc = await fetchHostData(firebaseUser.uid);
       if (!hostDoc) {
@@ -119,7 +114,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setIsAuthenticated(true);
       return null; // null = success
     } catch (err: any) {
-      console.error('🔥 [Auth] Login error:', err.code, err.message);
       // Firebase error codes ko user-friendly message mein convert karo
       switch (err.code) {
         case 'auth/user-not-found':
@@ -147,7 +141,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       await signOut(auth);
     } catch (err) {
-      console.error('🔥 [Auth] Logout error:', err);
+      // silent
     }
     setUser(null);
     setHostData(null);

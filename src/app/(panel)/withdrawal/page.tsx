@@ -14,7 +14,8 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
-import { fetchRemoteConfig, getRemoteString, RC_KEYS } from '@/lib/remoteConfig';
+// Cloud Function URL from Vercel ENV (no Remote Config)
+const FUN_WITHDRAWAL_REQUEST_URL = process.env.NEXT_PUBLIC_FUN_WITHDRAWAL_REQUEST || '';
 import { doc, onSnapshot, collection, onSnapshot as colOnSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { toast } from 'sonner';
@@ -141,7 +142,6 @@ export default function WithdrawalPage() {
       setWithdrawals(items.slice(0, 3));
       setLoading(false);
     }, (err) => {
-      console.error('Withdrawal snapshot error:', err);
       setLoading(false);
     });
 
@@ -172,8 +172,7 @@ export default function WithdrawalPage() {
     setSubmitting(true);
 
     try {
-      await fetchRemoteConfig();
-      const funcUrl = getRemoteString(RC_KEYS.FUN_WITHDRAWAL_REQUEST);
+      const funcUrl = FUN_WITHDRAWAL_REQUEST_URL;
 
       if (!funcUrl) {
         toast.error('Function URL not configured');

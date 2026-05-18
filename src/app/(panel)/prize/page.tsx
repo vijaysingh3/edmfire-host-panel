@@ -13,7 +13,8 @@ import {
 } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { useAuth } from '@/context/AuthContext';
-import { fetchRemoteConfig, getRemoteString, RC_KEYS } from '@/lib/remoteConfig';
+// Cloud Function URL from Vercel ENV (no Remote Config)
+const FUN_PRICE_DISTRIBUTION_URL = process.env.NEXT_PUBLIC_FUN_PRICE_DISTRIBUTION || '';
 import { rtdbGet } from '@/lib/rtdb';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
@@ -114,32 +115,21 @@ export default function PrizePage() {
   useEffect(() => {
     if (authLoading || !user) return;
     const init = async () => {
-      appendLog('Fetching Remote Config...', 'INFO');
+      appendLog('Checking configuration...', 'INFO');
       setConfigLoading(true);
 
-      await fetchRemoteConfig();
+      const funUrl = FUN_PRICE_DISTRIBUTION_URL;
 
-      const rtdbUrl = getRemoteString(RC_KEYS.RTDB_URL);
-      const funUrl = getRemoteString(RC_KEYS.FUN_PRICE_DISTRIBUTION);
-
-      appendLog('Remote Config fetched', 'SUCCESS');
-      appendLog(`Database URL: ${rtdbUrl ? 'Received (' + rtdbUrl.length + ' chars)' : 'EMPTY'}`, rtdbUrl ? 'INFO' : 'WARNING');
+      appendLog('Configuration loaded (Vercel ENV)', 'SUCCESS');
       appendLog(`Function URL: ${funUrl ? '******************' : 'EMPTY'}`, funUrl ? 'INFO' : 'WARNING');
 
-      if (!rtdbUrl) {
-        appendLog('Warning: Database URL missing — tournament list won\'t load', 'ERROR');
-        toast.warning('Database URL missing from Remote Config');
-      }
       if (!funUrl) {
         appendLog('Warning: Function URL missing — distribution won\'t work', 'ERROR');
-        toast.warning('Function URL missing from Remote Config');
+        toast.warning('Function URL missing from ENV');
       }
 
       setConfigLoading(false);
-
-      if (rtdbUrl) {
-        loadAllTournamentTypes();
-      }
+      loadAllTournamentTypes();
     };
     init();
   }, [user, authLoading]);
@@ -218,12 +208,6 @@ export default function PrizePage() {
       return;
     }
 
-    const rtdbUrl = getRemoteString(RC_KEYS.RTDB_URL);
-    if (!rtdbUrl) {
-      appendLog('Database URL not loaded, retry', 'ERROR');
-      return;
-    }
-
     const currentUserId = user?.uid || '';
     if (!currentUserId) {
       appendLog('User not logged in! Please login first.', 'ERROR');
@@ -246,7 +230,6 @@ export default function PrizePage() {
         parseTournamentType(type.value, data, currentUserId);
       } catch (e: any) {
         appendLog(`Failed to load ${type.value}: ${e.message}`, 'ERROR');
-        console.error(`[PrizeDist] Failed ${type.value}:`, e);
       }
       completedQueries++;
     }
@@ -332,7 +315,6 @@ export default function PrizePage() {
           paidWinners,
         });
       } catch (e) {
-        console.warn(`[PrizeDist] Skip bad tournament ${tournamentId}:`, e);
       }
     }
 
@@ -378,12 +360,6 @@ export default function PrizePage() {
 
     if (!tournamentType) {
       appendLog('Select a tournament type first', 'ERROR');
-      return;
-    }
-
-    const rtdbUrl = getRemoteString(RC_KEYS.RTDB_URL);
-    if (!rtdbUrl) {
-      appendLog('Database URL not loaded, retry', 'ERROR');
       return;
     }
 
@@ -540,9 +516,9 @@ export default function PrizePage() {
     }
 
     // Function URL check
-    const funUrl = getRemoteString(RC_KEYS.FUN_PRICE_DISTRIBUTION);
+    const funUrl = FUN_PRICE_DISTRIBUTION_URL;
     if (!funUrl) {
-      appendLog('Firebase Function URL is empty! Check RemoteConfig: Fun_pricedistribution', 'ERROR');
+      appendLog('Firebase Function URL is empty! Check Vercel ENV: NEXT_PUBLIC_FUN_PRICE_DISTRIBUTION', 'ERROR');
       toast.error('Configuration error: Function URL missing');
       return;
     }
@@ -585,7 +561,6 @@ export default function PrizePage() {
         headers['Authorization'] = `Bearer ${idToken}`;
       }
 
-      console.log('[PrizeDist] Calling:', funUrl);
       const response = await fetch(funUrl, {
         method: 'POST',
         headers,

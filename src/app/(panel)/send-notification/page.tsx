@@ -13,7 +13,8 @@ import {
 } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { useAuth } from '@/context/AuthContext';
-import { fetchRemoteConfig, getRemoteString, RC_KEYS } from '@/lib/remoteConfig';
+// Cloud Function URL from Vercel ENV (no Remote Config)
+const NOTIFY_JOINED_PLAYERS_URL = process.env.NEXT_PUBLIC_NOTIFY_JOINED_PLAYERS || '';
 import { rtdbGet } from '@/lib/rtdb';
 import { auth } from '@/lib/firebase';
 import {
@@ -83,21 +84,12 @@ export default function SendNotificationPage() {
   useEffect(() => {
     if (authLoading) return;
     const init = async () => {
-      appendLog('Fetching Remote Config...', 'INFO');
-      await fetchRemoteConfig();
+      appendLog('Checking configuration...', 'INFO');
+      const notifyUrl = NOTIFY_JOINED_PLAYERS_URL;
 
-      const rtdbUrl = getRemoteString(RC_KEYS.RTDB_URL);
-      const rtdbSecret = getRemoteString(RC_KEYS.RTDB_SECRET);
-      const notifyUrl = getRemoteString(RC_KEYS.NOTIFY_JOINED_PLAYERS);
+      appendLog('Configuration loaded (Vercel ENV)', 'SUCCESS');
+      appendLog('RTDB configured (server-side)', 'INFO');
 
-      appendLog('Remote Config fetched', 'SUCCESS');
-      appendLog(`Database URL: ${rtdbUrl ? 'Received' : 'EMPTY'}`, rtdbUrl ? 'INFO' : 'WARNING');
-      appendLog(`DB Secret: ${rtdbSecret ? 'Received' : 'EMPTY'}`, rtdbSecret ? 'INFO' : 'WARNING');
-      appendLog(`Function URL: ${notifyUrl ? 'Received' : 'EMPTY'}`, notifyUrl ? 'INFO' : 'WARNING');
-
-      if (!rtdbUrl || !rtdbSecret) {
-        appendLog('Warning: RTDB config missing — tournament info won\'t load', 'WARNING');
-      }
       if (!notifyUrl) {
         appendLog('Warning: Function URL missing — notifications won\'t send', 'WARNING');
       }
@@ -152,13 +144,6 @@ export default function SendNotificationPage() {
     }
     if (!tournamentType) {
       appendLog('Tournament Type required', 'ERROR');
-      return;
-    }
-
-    const rtdbUrl = getRemoteString(RC_KEYS.RTDB_URL);
-    const rtdbSecret = getRemoteString(RC_KEYS.RTDB_SECRET);
-    if (!rtdbUrl || !rtdbSecret) {
-      appendLog('RTDB config missing — fetch Remote Config first', 'ERROR');
       return;
     }
 
@@ -219,9 +204,9 @@ export default function SendNotificationPage() {
       return;
     }
 
-    const funUrl = getRemoteString(RC_KEYS.NOTIFY_JOINED_PLAYERS);
+    const funUrl = NOTIFY_JOINED_PLAYERS_URL;
     if (!funUrl) {
-      appendLog('Function URL missing — check Remote Config', 'ERROR');
+      appendLog('Function URL missing — check Vercel ENV: NEXT_PUBLIC_NOTIFY_JOINED_PLAYERS', 'ERROR');
       return;
     }
 
@@ -258,7 +243,7 @@ export default function SendNotificationPage() {
           idToken = tokenResult;
         }
       } catch (e) {
-        console.warn('ID token fetch failed, sending without auth header');
+        // token fetch failed — proceed without auth
       }
 
       // Call Firebase Function — Kotlin: callFirebaseFunction()
@@ -269,7 +254,6 @@ export default function SendNotificationPage() {
         headers['Authorization'] = `Bearer ${idToken}`;
       }
 
-      console.log('📤 [Notify] Calling Firebase Function:', funUrl);
       const response = await fetch(funUrl, {
         method: 'POST',
         headers,

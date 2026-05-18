@@ -277,7 +277,6 @@ export default function WalletPage() {
       setTransactions(items);
       setLoading(false);
     }, (err) => {
-      console.error('TransactionHistory snapshot error:', err);
       setLoading(false);
     });
 

@@ -13,7 +13,8 @@ import {
 } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { useAuth } from '@/context/AuthContext';
-import { fetchRemoteConfig, getRemoteString, RC_KEYS } from '@/lib/remoteConfig';
+// Cloud Function URL from Vercel ENV (no Remote Config)
+const FUN_REFUND_JOINED_PLAYERS_URL = process.env.NEXT_PUBLIC_FUN_REFUND_JOINED_PLAYERS || '';
 import { rtdbGet } from '@/lib/rtdb';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
@@ -129,26 +130,14 @@ export default function RefundCoinsPage() {
     const init = async () => {
       setConfigLoading(true);
 
-      await fetchRemoteConfig();
+      refundFunctionUrl.current = FUN_REFUND_JOINED_PLAYERS_URL;
 
-      const rtdbUrl = getRemoteString(RC_KEYS.RTDB_URL);
-      const rtdbSecret = getRemoteString(RC_KEYS.RTDB_SECRET);
-      const funcUrl = getRemoteString('Fun_refundjoinedplayers');
-
-      refundFunctionUrl.current = funcUrl;
-
-      if (!rtdbUrl || !rtdbSecret) {
-        toast.warning('Config error: URL or Secret missing');
-      }
-      if (!funcUrl) {
+      if (!refundFunctionUrl.current) {
         toast.warning('Refund function not configured');
       }
 
       setConfigLoading(false);
-
-      if (rtdbUrl && rtdbSecret) {
-        loadTournamentIds();
-      }
+      loadTournamentIds();
     };
     init();
   }, [user, authLoading]);
@@ -431,7 +420,7 @@ export default function RefundCoinsPage() {
   ) => {
     setRefundProcessing(true);
 
-    const funcUrl = getRemoteString('Fun_refundjoinedplayers');
+    const funcUrl = FUN_REFUND_JOINED_PLAYERS_URL;
 
     if (!funcUrl) {
       toast.error('Refund function not configured');

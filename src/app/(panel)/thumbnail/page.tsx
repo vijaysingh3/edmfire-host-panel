@@ -4,7 +4,8 @@ import { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { useAuth } from '@/context/AuthContext';
-import { fetchRemoteConfig, getRemoteString, RC_KEYS } from '@/lib/remoteConfig';
+// Cloud Function URL from Vercel ENV (no Remote Config)
+const UNIVERSAL_IMAGE_UPLOADER_URL = process.env.NEXT_PUBLIC_UNIVERSAL_IMAGE_UPLOADER_URL || '';
 import {
   collection,
   query,
@@ -66,16 +67,14 @@ export default function ThumbnailPage() {
   }, [user, authLoading]);
 
   const init = async () => {
-    // Remote Config fetch — Kotlin me fetchRemoteConfig() call hota tha onCreate me
-    await fetchRemoteConfig();
-    const url = getRemoteString(RC_KEYS.UNIVERSAL_IMAGE_UPLOADER_URL);
+    const url = UNIVERSAL_IMAGE_UPLOADER_URL;
     setUploaderUrl(url);
 
     if (!url) {
-      toast.error('Config Error', { description: 'UNIVERSAL_IMAGE_UPLOADER_URL is empty in RemoteConfig' });
+      toast.error('Config Error', { description: 'NEXT_PUBLIC_UNIVERSAL_IMAGE_UPLOADER_URL is empty in Vercel ENV' });
     }
 
-    // Thumbnails fetch — Kotlin me bhi fetchAndActivate ke andar fetchAllThumbnails() call hota tha
+    // Thumbnails fetch
     if (user) {
       fetchAllThumbnails();
     }
@@ -112,7 +111,6 @@ export default function ThumbnailPage() {
 
       setThumbnails(list);
     } catch (e: any) {
-      console.error('❌ [Thumbnail] Fetch error:', e);
       toast.error('Failed to load thumbnails', { description: e.message });
     } finally {
       setLoadingList(false);
@@ -176,7 +174,6 @@ export default function ThumbnailPage() {
         images: [{ base64 }],
       };
 
-      console.log('📸 [Thumbnail] Uploading to Cloud Function...');
       const response = await fetch(uploaderUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -210,7 +207,6 @@ export default function ThumbnailPage() {
           title: selectedFile.name,
         });
 
-        console.log('✅ [Thumbnail] Saved to Firestore:', url);
         setUploadedUrl(url);
         setUploadedFileName(fileName);
         toast.success('Thumbnail Uploaded!', { description: 'Saved to Cloud Storage + Firestore' });
@@ -225,7 +221,6 @@ export default function ThumbnailPage() {
       setPreviewUrl(null);
 
     } catch (e: any) {
-      console.error('❌ [Thumbnail] Upload error:', e);
       toast.error('Upload Failed', { description: e.message });
     } finally {
       setUploading(false);
@@ -242,9 +237,6 @@ export default function ThumbnailPage() {
   const handleRefresh = async () => {
     setRefreshing(true);
     setSearchQuery('');
-    await fetchRemoteConfig();
-    const url = getRemoteString(RC_KEYS.UNIVERSAL_IMAGE_UPLOADER_URL);
-    setUploaderUrl(url);
     await fetchAllThumbnails();
     setRefreshing(false);
     toast.success('Refreshed!');

@@ -102,13 +102,13 @@ service cloud.firestore {
     }
 
     // ===================================================
-    // 6. Host Applications (PUBLIC CREATE/READ - ADMIN WRITE/DELETE)
+    // 6. Host Applications (PUBLIC CREATE & READ - ADMIN WRITE/DELETE)
     //    - Anyone can create and read (for tracking status without login)
     //    - Only admin can update status or delete
     // ===================================================
     match /applications/{doc} {
       allow create: if true;
-      allow read: if true;
+      allow read: if true;  // anonymous read for tracking
       allow update, delete: if isAdmin();
     }
 
@@ -140,6 +140,24 @@ service cloud.firestore {
         allow create: if isUserOwner(hostId) || isAdmin();
         allow update, delete: if isAdmin();
       }
+
+      // ── accountBalance subcollection ──
+      // Host wallet balance — ONLY READ by host, ALL WRITE by Admin/Functions only
+      // Doc ID = "wallet", Field = walletBalance (PAISA int)
+      // Host panel uses onSnapshot for realtime balance display
+      match /accountBalance/{walletId} {
+        allow read: if isUserOwner(hostId) || isAdmin();
+        allow write, create, update, delete: if isAdmin();
+      }
+
+      // ── transactionHistory subcollection ──
+      // Host transactions — ONLY READ by host, ALL WRITE by Admin/Functions only
+      // Doc IDs: TJ_xxx (joining), EDM118PRD_xxx (price distribution)
+      // Fields: amount, category, status, timestamp, transactionId, transactionType
+      match /transactionHistory/{txnId} {
+        allow read: if isUserOwner(hostId) || isAdmin();
+        allow write, create, update, delete: if isAdmin();
+      }
     }
 
     // ===================================================
@@ -153,7 +171,23 @@ service cloud.firestore {
     }
 
     // ===================================================
-    // 9. Default (Admin-only catch-all)
+    // 9. ✅ NEW: Feedbacks Collection
+    //    - User can create/edit/delete only their own feedback
+    //    - User can read only their own feedback
+    //    - Admin has full access
+    //    - Document ID = userId (Firebase Auth UID)
+    // ===================================================
+    match /Feedbacks/{userId} {
+      allow read: if isUserOwner(userId) || isAdmin();
+      allow create, update, delete: if isUserOwner(userId) || isAdmin();
+      
+      // Validate data on write
+      allow write: if isUserOwner(userId) || isAdmin() &&
+        request.resource.data.keys().hasOnly(["userId", "description", "imageUrl", "timestampIST"]);
+    }
+
+    // ===================================================
+    // 10. Default (Admin-only catch-all)
     // ===================================================
     match /{doc=**} {
       allow read, write, update, create, delete: if isAdmin();

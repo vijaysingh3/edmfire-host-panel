@@ -18,7 +18,6 @@ import {
   Map,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
-import { fetchRemoteConfig, getRemoteString, RC_KEYS } from '@/lib/remoteConfig';
 import { rtdbGet } from '@/lib/rtdb';
 import { collection, getDocs, query, orderBy } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
@@ -179,17 +178,6 @@ export default function TournamentsPage() {
     const init = async () => {
       setConfigLoading(true);
 
-      await fetchRemoteConfig();
-
-      const rtdbUrl = getRemoteString(RC_KEYS.RTDB_URL);
-      const rtdbSecret = getRemoteString(RC_KEYS.RTDB_SECRET);
-
-      if (!rtdbUrl || !rtdbSecret) {
-        toast.warning('Config error: URL or Secret missing');
-        setConfigLoading(false);
-        return;
-      }
-
       setConfigLoading(false);
       await loadTournaments();
     };
@@ -267,7 +255,6 @@ export default function TournamentsPage() {
             });
           }
         } catch (e: any) {
-          console.error(`Failed to load ${type} meta:`, e);
         }
       }
 
