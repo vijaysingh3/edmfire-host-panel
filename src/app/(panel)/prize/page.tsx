@@ -515,6 +515,24 @@ export default function PrizePage() {
       return;
     }
 
+    // ═══ WinnerList Check — winners hona zaroori hai ═══
+    if (tournament.winnerCount === 0) {
+      appendLog('WinnerList not found or empty! Cannot distribute without winners.', 'ERROR');
+      appendLog('Step 4 (Update Result) me jaa kar WinnersData update karo.', 'WARNING');
+      toast.error('WinnerList not found!', {
+        description: 'Step 4 (Update Result) me jaa kar WinnersData update karo — WinnerList add nahi hai is tournament me.',
+        duration: 8000,
+      });
+      return;
+    }
+
+    const unpaidWinners = tournament.winnerCount - tournament.paidWinners;
+    if (unpaidWinners === 0) {
+      appendLog('All winners are already paid! No pending winners.', 'WARNING');
+      toast.warning('All winners already paid!');
+      return;
+    }
+
     // Function URL check
     const funUrl = FUN_PRICE_DISTRIBUTION_URL;
     if (!funUrl) {
