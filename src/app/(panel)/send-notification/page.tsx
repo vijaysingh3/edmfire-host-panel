@@ -182,7 +182,16 @@ export default function SendNotificationPage() {
       }
 
       const title = data.Title || 'N/A';
-      const playerCount = data.JoinedPlayersCount || 0;
+
+      // Count actual JoinedPlayers (array or object) — JoinedPlayersCount field is unreliable
+      let playerCount = 0;
+      if (data.JoinedPlayers) {
+        if (Array.isArray(data.JoinedPlayers)) {
+          playerCount = data.JoinedPlayers.filter((p: any) => p && typeof p === 'object' && p.userId).length;
+        } else if (typeof data.JoinedPlayers === 'object') {
+          playerCount = Object.values(data.JoinedPlayers).filter((p: any) => p && typeof p === 'object' && p.userId).length;
+        }
+      }
 
       setCachedTitle(title);
       setCachedPlayerCount(playerCount);

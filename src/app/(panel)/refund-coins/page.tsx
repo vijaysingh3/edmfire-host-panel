@@ -37,7 +37,7 @@ const TOURNAMENT_TYPES = [
   { value: 'LoneWolf', label: 'LoneWolf' },
 ];
 
-const ARRAY_FORMAT_TYPES = ['ClashSquad', 'LoneWolf'];
+// JoinedPlayers auto-detected as array or object — no hardcoded type list needed
 
 const basePath = (type: string, id: string) =>
   `Tournaments/TournamentDetails/${type}/${id}`;
@@ -368,10 +368,16 @@ export default function RefundCoinsPage() {
   const parseJoinedPlayers = (raw: any, type: string, tid: string, fee: number) => {
     const list: RefundPlayerModel[] = [];
 
-    if (ARRAY_FORMAT_TYPES.includes(type)) {
-      const arr = Array.isArray(raw) ? raw : convertToArray(raw);
-      for (let i = 0; i < arr.length; i++) {
-        const item = arr[i];
+    if (!raw || typeof raw !== 'object') {
+      setPlayers(list);
+      if (list.length === 0) toast.warning('No players found');
+      return;
+    }
+
+    // Auto-detect format: array vs object (any type can have either format)
+    if (Array.isArray(raw)) {
+      for (let i = 0; i < raw.length; i++) {
+        const item = raw[i];
         if (!item || typeof item !== 'object') continue;
         list.push({
           playerKey: i.toString(),
@@ -384,20 +390,18 @@ export default function RefundCoinsPage() {
         });
       }
     } else {
-      if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-        for (const [key, val] of Object.entries(raw)) {
-          const obj = val as Record<string, any>;
-          if (!obj || typeof obj !== 'object') continue;
-          list.push({
-            playerKey: key,
-            tournamentType: type,
-            tournamentId: tid,
-            inGameName: obj.InGameName || '',
-            positionSeat: obj.PositionSeat || 0,
-            userId: obj.userId || '',
-            joiningFee: fee,
-          });
-        }
+      for (const [key, val] of Object.entries(raw)) {
+        const obj = val as Record<string, any>;
+        if (!obj || typeof obj !== 'object') continue;
+        list.push({
+          playerKey: key,
+          tournamentType: type,
+          tournamentId: tid,
+          inGameName: obj.InGameName || '',
+          positionSeat: obj.PositionSeat || 0,
+          userId: obj.userId || '',
+          joiningFee: fee,
+        });
       }
     }
 
