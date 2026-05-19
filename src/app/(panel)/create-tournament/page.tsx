@@ -55,6 +55,10 @@ const MAPS = [
   { value: 'Nexterra', label: 'Nexterra' },
 ];
 
+const MAPS_LONEWOLF = [
+  { value: 'IronCage', label: 'IronCage' },
+];
+
 const TYPES = [
   { value: 'Solo', label: 'Solo' },
   { value: 'Duo', label: 'Duo' },
@@ -396,6 +400,14 @@ export default function CreateTournamentPage() {
   };
 
   // Type select karne pe IDs load karo — Kotlin: loadTournamentIdsForType()
+  // When gameMode changes to LoneWolf → auto-lock map to IronCage
+  const handleGameModeChange = (value: string) => {
+    setGameMode(value);
+    if (value === 'LoneWolf') {
+      setMap('IronCage');
+    }
+  };
+
   const handleUpdateTypeChange = (value: string) => {
     setUpdateType(value);
     setUpdateId('');
@@ -680,7 +692,7 @@ export default function CreateTournamentPage() {
           {mode === 'create' && (
             <div className="space-y-2">
               <Label className="text-xs text-[oklch(0.70,0.04,290)] font-semibold">Game Mode <span className="text-red-400">*</span></Label>
-              <Select value={gameMode} onValueChange={setGameMode}>
+              <Select value={gameMode} onValueChange={handleGameModeChange}>
                 <SelectTrigger className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white h-12 rounded-xl">
                   <SelectValue placeholder="Select Game Mode" />
                 </SelectTrigger>
@@ -733,19 +745,27 @@ export default function CreateTournamentPage() {
             <p className="text-[10px] text-[oklch(0.40,0.04,290)]">Stored as YYYY/MM/DD HH:MM AM/PM format</p>
           </div>
 
-          {/* Map — Kotlin: spinnerMap */}
+          {/* Map — LoneWolf = IronCage only (locked), others = full list */}
           <div className="space-y-2">
             <Label className="text-xs text-[oklch(0.70,0.04,290)] font-semibold">Map</Label>
-            <Select value={map} onValueChange={setMap}>
-              <SelectTrigger className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white h-12 rounded-xl">
-                <SelectValue placeholder="Select Map" />
-              </SelectTrigger>
-              <SelectContent>
-                {MAPS.map((m) => (
-                  <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {gameMode === 'LoneWolf' ? (
+              <div className="flex items-center bg-[oklch(0.22,0.04,290)] border border-[oklch(0.35,0.06,290)] rounded-xl px-4 h-12">
+                <span className="w-2 h-2 rounded-full bg-orange-400 mr-2" />
+                <span className="text-sm font-semibold text-orange-400">IronCage</span>
+                <span className="text-[10px] text-[oklch(0.40,0.04,290)] ml-auto">Only map for LoneWolf</span>
+              </div>
+            ) : (
+              <Select value={map} onValueChange={setMap}>
+                <SelectTrigger className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white h-12 rounded-xl">
+                  <SelectValue placeholder="Select Map" />
+                </SelectTrigger>
+                <SelectContent>
+                  {MAPS.map((m) => (
+                    <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </div>
 
           {/* Type: Solo/Duo/Squad — Kotlin: spinnerType */}
