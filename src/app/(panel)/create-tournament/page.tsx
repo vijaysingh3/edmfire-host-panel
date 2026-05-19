@@ -208,13 +208,10 @@ export default function CreateTournamentPage() {
     }
   }, [user]);
 
-  // ── Init: Remote Config ──
+  // ── Init ──
   useEffect(() => {
     if (authLoading) return;
-    const init = async () => {
-      setConfigReady(true);
-    };
-    init();
+    setConfigReady(true);
   }, [user, authLoading]);
 
   // ── Validate required fields — Kotlin TournamentValidator equivalent ──
@@ -544,6 +541,19 @@ export default function CreateTournamentPage() {
       if (!metaSuccess) throw new Error('Meta update failed');
       if (!detailsSuccess) throw new Error('Details update failed');
 
+      // ═══ TournamentsCount — Completed pe minus 1 ═══
+      const previousStatus = currentTournamentData?.Status || '';
+      if (status === 'Completed' && previousStatus !== 'Completed' && updateType) {
+        try {
+          const countData = await rtdbGet('Tournaments/TournamentsCount');
+          const counts: Record<string, number> = countData || {};
+          counts[updateType] = Math.max(0, (counts[updateType] || 0) - 1);
+          await rtdbPut('Tournaments/TournamentsCount', counts);
+        } catch (countErr) {
+          // non-critical — main update already succeeded
+        }
+      }
+
       // Refresh current data
       const newData = await rtdbGet(metaPath);
       if (newData) setCurrentTournamentData(newData);
@@ -820,6 +830,12 @@ export default function CreateTournamentPage() {
                 <span className="w-2 h-2 rounded-full bg-green-400 mr-2" />
                 <span className="text-sm font-semibold text-green-400">Upcoming</span>
                 <span className="text-[10px] text-[oklch(0.40,0.04,290)] ml-auto">Default for new tournament</span>
+              </div>
+            ) : currentTournamentData?.Status === 'Completed' ? (
+              <div className="flex items-center bg-[oklch(0.22,0.04,290)] border border-[oklch(0.35,0.06,290)] rounded-xl px-4 h-12">
+                <span className="w-2 h-2 rounded-full bg-gray-400 mr-2" />
+                <span className="text-sm font-semibold text-gray-400">Completed (Locked)</span>
+                <span className="text-[10px] text-[oklch(0.40,0.04,290)] ml-auto">Cannot change status</span>
               </div>
             ) : (
               <Select value={status} onValueChange={setStatus}>
