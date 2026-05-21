@@ -108,42 +108,46 @@ function generateNewTournamentId(existingIds: string[]): string {
 
 // ═══════════════════════════════════════════════════
 // DATETIME FORMAT — "YYYY/MM/DD HH:MM AM/PM"
-// datetime-local input (24h) → 12-hour AM/PM for RTDB
+// Separate date + hour + minute + AM/PM fields → RTDB string
 // ═══════════════════════════════════════════════════
-function formatDateTimeForRTDB(dtLocal: string): string {
-  // "2025-05-14T15:30" → "2025/05/14 03:30 PM"
-  if (!dtLocal) return '';
-  const [date, time] = dtLocal.split('T');
-  if (!date || !time) return dtLocal;
-  const [y, m, d] = date.split('-');
-  const [hh, mm] = time.split(':');
-  const hour = parseInt(hh, 10);
-  const ampm = hour >= 12 ? 'PM' : 'AM';
-  const h12 = hour % 12 || 12;
-  return `${y}/${m}/${d} ${String(h12).padStart(2, '0')}:${mm} ${ampm}`;
+function formatDateTimeForRTDB(dateStr: string, hour: string, minute: string, ampm: string): string {
+  // "2025-05-14", "03", "30", "PM" → "2025/05/14 03:30 PM"
+  if (!dateStr) return '';
+  const [y, m, d] = dateStr.split('-');
+  if (!y || !m || !d) return dateStr;
+  return `${y}/${m}/${d} ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} ${ampm}`;
 }
 
 // ═══════════════════════════════════════════════════
-// PARSE DATETIME — RTDB → datetime-local input
-// "2025/05/14 03:30 PM" → "2025-05-14T15:30"
-// Also handles old 24h format: "2025/05/14 15:30" → "2025-05-14T15:30"
+// PARSE DATETIME — RTDB → separate date + hour + minute + AM/PM
+// "2025/05/14 03:30 PM" → { date, hour, minute, ampm }
+// Also handles old 24h format: "2025/05/14 15:30"
 // ═══════════════════════════════════════════════════
-function parseRTDBDateTime(dtStr: string): string {
-  if (!dtStr) return '';
+function parseRTDBDateTime(dtStr: string): { date: string; hour: string; minute: string; ampm: 'AM' | 'PM' } {
+  const empty = { date: '', hour: '12', minute: '00', ampm: 'PM' as const };
+  if (!dtStr) return empty;
   const trimmed = dtStr.trim();
   const parts = trimmed.split(' ');
-  // parts: ["YYYY/MM/DD", "HH:MM", "AM"/"PM"] or ["YYYY/MM/DD", "HH:MM"]
-  if (parts.length < 2) return trimmed;
+  if (parts.length < 2) return empty;
   const datePart = parts[0];
   const timePart = parts[1];
-  const ampm = parts[2] || '';
+  const ampmStr = (parts[2] || '').toUpperCase();
   const [y, m, d] = datePart.split('/');
   const [hh, mm] = timePart.split(':');
-  let hour = parseInt(hh, 10);
-  // Convert 12h AM/PM → 24h
-  if (ampm.toUpperCase() === 'PM' && hour !== 12) hour += 12;
-  if (ampm.toUpperCase() === 'AM' && hour === 12) hour = 0;
-  return `${y}-${m}-${d}T${String(hour).padStart(2, '0')}:${mm}`;
+  if (!y || !m || !d) return empty;
+  let hour24 = parseInt(hh, 10);
+  // Convert 12h AM/PM → 24h for date input
+  if (ampmStr === 'PM' && hour24 !== 12) hour24 += 12;
+  if (ampmStr === 'AM' && hour24 === 12) hour24 = 0;
+  const dateISO = `${y}-${m}-${d}`;
+  // 24h → 12h for display
+  const h12 = hour24 % 12 || 12;
+  const ampm: 'AM' | 'PM' = hour24 >= 12 ? 'PM' : 'AM';
+  // If RTDB already has AM/PM, use it directly for the time fields
+  if (ampmStr === 'AM' || ampmStr === 'PM') {
+    return { date: dateISO, hour: String(parseInt(hh, 10)).padStart(2, '0'), minute: String(mm).padStart(2, '0'), ampm: ampmStr as 'AM' | 'PM' };
+  }
+  return { date: dateISO, hour: String(h12).padStart(2, '0'), minute: String(mm).padStart(2, '0'), ampm };
 }
 
 export default function CreateTournamentPage() {
@@ -162,6 +166,11 @@ export default function CreateTournamentPage() {
   const [description, setDescription] = useState('');
   const [bannerUrl, setBannerUrl] = useState('');
   const [dateTime, setDateTime] = useState('');
+  // ── AM/PM Time Fields (replaces datetime-local) ──
+  const [dateOnly, setDateOnly] = useState('');
+  const [timeHour, setTimeHour] = useState('12');
+  const [timeMinute, setTimeMinute] = useState('00');
+  const [timeAmPm, setTimeAmPm] = useState<'AM' | 'PM'>('PM');
   const [map, setMap] = useState('');
   const [type, setType] = useState('');
   const [slotNumbers, setSlotNumbers] = useState('');
@@ -224,8 +233,8 @@ export default function CreateTournamentPage() {
       toast.error('Title is required');
       return false;
     }
-    if (!dateTime.trim()) {
-      toast.error('Date & Time is required');
+    if (!dateOnly) {
+      toast.error('Date is required');
       return false;
     }
     return true;
@@ -237,6 +246,10 @@ export default function CreateTournamentPage() {
     setDescription('');
     setBannerUrl('');
     setDateTime('');
+    setDateOnly('');
+    setTimeHour('12');
+    setTimeMinute('00');
+    setTimeAmPm('PM');
     setSlotNumbers('');
     setJoiningFee('');
     setReferralUseAmount('');
@@ -304,7 +317,7 @@ export default function CreateTournamentPage() {
       const pricePoolPaisa = rupeesToPaisa(parseFloat(pricePool) || 0);
 
 
-      const formattedDT = formatDateTimeForRTDB(dateTime);
+      const formattedDT = formatDateTimeForRTDB(dateOnly, timeHour, timeMinute, timeAmPm);
 
       const tournamentData: Record<string, any> = {
         Title: title,
@@ -446,9 +459,15 @@ export default function CreateTournamentPage() {
       setDescription(data.Description || '');
       setBannerUrl(data.BannerUrl || '');
 
-      // DateTime: RTDB se "YYYY/MM/DD HH:MM AM/PM" aata hai, datetime-local ke liye convert
+      // DateTime: RTDB se "YYYY/MM/DD HH:MM AM/PM" aata hai, separate fields me convert
       const dtStr = data.DateTime || '';
-      setDateTime(dtStr.includes('/') ? parseRTDBDateTime(dtStr) : '');
+      if (dtStr.includes('/')) {
+        const parsed = parseRTDBDateTime(dtStr);
+        setDateOnly(parsed.date);
+        setTimeHour(parsed.hour);
+        setTimeMinute(parsed.minute);
+        setTimeAmPm(parsed.ampm);
+      }
 
       setSlotNumbers(String(data.SlotNumbers || ''));
 
@@ -498,7 +517,7 @@ export default function CreateTournamentPage() {
         hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
       });
 
-      const formattedDT = formatDateTimeForRTDB(dateTime);
+      const formattedDT = formatDateTimeForRTDB(dateOnly, timeHour, timeMinute, timeAmPm);
 
       // Build updates — include ALL non-empty fields (even 0 values)
       const updates: Record<string, any> = { LastUpdated: now };
@@ -538,6 +557,8 @@ export default function CreateTournamentPage() {
       if (roomId.trim()) updates.RoomID = roomId;
       if (roomPassword.trim()) updates.RoomPassword = roomPassword;
       if (videoUrl.trim()) updates.VideoUrl = videoUrl;
+
+      if (formattedDT) updates.DateTime = formattedDT;
 
       // Update BOTH Meta and Details — parallel for speed
       const metaPath = `Tournaments/TournamentMeta/${updateType}/${updateId}`;
@@ -737,12 +758,29 @@ export default function CreateTournamentPage() {
               className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)] h-12 rounded-xl" />
           </div>
 
-          {/* Date & Time — Kotlin: etDateTime (format YYYY/MM/DD HH:MM) */}
+          {/* Date & Time — separate date + time with AM/PM */}
           <div className="space-y-2">
             <Label className="text-xs text-[oklch(0.70,0.04,290)] font-semibold">Date &amp; Time <span className="text-red-400">*</span></Label>
-            <Input type="datetime-local" value={dateTime} onChange={(e) => setDateTime(e.target.value)}
+            <Input type="date" value={dateOnly} onChange={(e) => setDateOnly(e.target.value)}
               className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white h-12 rounded-xl" />
-            <p className="text-[10px] text-[oklch(0.40,0.04,290)]">Stored as YYYY/MM/DD HH:MM AM/PM format</p>
+            <div className="grid grid-cols-3 gap-2">
+              <Input type="number" min="1" max="12" value={timeHour}
+                onChange={(e) => setTimeHour(e.target.value)} placeholder="HH"
+                className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white h-12 rounded-xl text-center font-mono" />
+              <Input type="number" min="0" max="59" value={timeMinute}
+                onChange={(e) => setTimeMinute(e.target.value)} placeholder="MM"
+                className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white h-12 rounded-xl text-center font-mono" />
+              <Select value={timeAmPm} onValueChange={(v) => setTimeAmPm(v as 'AM' | 'PM')}>
+                <SelectTrigger className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white h-12 rounded-xl text-center">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="AM">AM</SelectItem>
+                  <SelectItem value="PM">PM</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <p className="text-[10px] text-[oklch(0.40,0.04,290)]">Format: YYYY/MM/DD HH:MM AM/PM</p>
           </div>
 
           {/* Map — LoneWolf = IronCage only (locked), others = full list */}
