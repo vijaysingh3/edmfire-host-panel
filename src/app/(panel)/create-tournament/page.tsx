@@ -859,19 +859,21 @@ export default function CreateTournamentPage() {
               className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)] h-12 rounded-xl" />
           </div>
 
-          {/* Room ID + Room Password */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label className="text-xs text-[oklch(0.70,0.04,290)] font-semibold">Room ID</Label>
-              <Input value={roomId} onChange={(e) => setRoomId(e.target.value)} placeholder="Enter Room ID"
-                className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)] h-12 rounded-xl" />
+          {/* Room ID + Room Password — Update mode only (host creates room later) */}
+          {mode === 'update' && (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label className="text-xs text-[oklch(0.70,0.04,290)] font-semibold">Room ID</Label>
+                <Input value={roomId} onChange={(e) => setRoomId(e.target.value)} placeholder="Enter Room ID"
+                  className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)] h-12 rounded-xl" />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs text-[oklch(0.70,0.04,290)] font-semibold">Room Password</Label>
+                <Input value={roomPassword} onChange={(e) => setRoomPassword(e.target.value)} placeholder="Enter Password"
+                  className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)] h-12 rounded-xl" />
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label className="text-xs text-[oklch(0.70,0.04,290)] font-semibold">Room Password</Label>
-              <Input value={roomPassword} onChange={(e) => setRoomPassword(e.target.value)} placeholder="Enter Password"
-                className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)] h-12 rounded-xl" />
-            </div>
-          </div>
+          )}
 
           {/* Video URL */}
           <div className="space-y-2">
