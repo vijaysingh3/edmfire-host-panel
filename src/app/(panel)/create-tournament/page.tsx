@@ -764,12 +764,16 @@ export default function CreateTournamentPage() {
             <Input type="date" value={dateOnly} onChange={(e) => setDateOnly(e.target.value)}
               className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white h-12 rounded-xl" />
             <div className="grid grid-cols-3 gap-2">
-              <Input type="number" min="1" max="12" value={timeHour}
-                onChange={(e) => setTimeHour(e.target.value)} placeholder="HH"
-                className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white h-12 rounded-xl text-center font-mono" />
-              <Input type="number" min="0" max="59" value={timeMinute}
-                onChange={(e) => setTimeMinute(e.target.value)} placeholder="MM"
-                className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white h-12 rounded-xl text-center font-mono" />
+              <Input type="text" inputMode="numeric" maxLength={2}
+                value={timeHour}
+                onChange={(e) => setTimeHour(e.target.value.replace(/[^0-9]/g, '').slice(0, 2))}
+                placeholder="HH"
+                className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white h-12 rounded-xl text-center font-mono text-base" />
+              <Input type="text" inputMode="numeric" maxLength={2}
+                value={timeMinute}
+                onChange={(e) => setTimeMinute(e.target.value.replace(/[^0-9]/g, '').slice(0, 2))}
+                placeholder="MM"
+                className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white h-12 rounded-xl text-center font-mono text-base" />
               <Select value={timeAmPm} onValueChange={(v) => setTimeAmPm(v as 'AM' | 'PM')}>
                 <SelectTrigger className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white h-12 rounded-xl text-center">
                   <SelectValue />
@@ -780,7 +784,6 @@ export default function CreateTournamentPage() {
                 </SelectContent>
               </Select>
             </div>
-            <p className="text-[10px] text-[oklch(0.40,0.04,290)]">Format: YYYY/MM/DD HH:MM AM/PM</p>
           </div>
 
           {/* Map — LoneWolf = IronCage only (locked), others = full list */}
@@ -832,7 +835,6 @@ export default function CreateTournamentPage() {
               <Label className="text-xs text-[oklch(0.70,0.04,290)] font-semibold">Joining Fee (Coins) <span className="text-red-400">*</span></Label>
               <Input type="number" step="any" value={joiningFee} onChange={(e) => setJoiningFee(e.target.value)} placeholder="e.g. 30"
                 className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)] h-12 rounded-xl" />
-              <p className="text-[10px] text-[oklch(0.40,0.04,290)]">Enter in Rupees (1.5 = 1.5 Coins)</p>
             </div>
           </div>
 
@@ -847,7 +849,6 @@ export default function CreateTournamentPage() {
               <Label className="text-xs text-[oklch(0.70,0.04,290)] font-semibold">Per Kill Reward (Coins)</Label>
               <Input type="number" step="any" value={perKill} onChange={(e) => setPerKill(e.target.value)} placeholder="e.g. 5"
                 className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)] h-12 rounded-xl" />
-              <p className="text-[10px] text-[oklch(0.40,0.04,290)]">Enter in Rupees</p>
             </div>
           </div>
 
@@ -856,7 +857,6 @@ export default function CreateTournamentPage() {
             <Label className="text-xs text-[oklch(0.70,0.04,290)] font-semibold">Price Pool (Coins)</Label>
             <Input type="number" step="any" value={pricePool} onChange={(e) => setPricePool(e.target.value)} placeholder="Enter total price pool"
               className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)] h-12 rounded-xl" />
-            <p className="text-[10px] text-[oklch(0.40,0.04,290)]">Enter in Rupees — stored as Paisa in database</p>
           </div>
 
           {/* Room ID + Room Password */}
