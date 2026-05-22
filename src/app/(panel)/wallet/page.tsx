@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import {
   Wallet,
@@ -21,14 +21,21 @@ import {
   Gift,
   Upload,
   CircleDollarSign,
+  ChevronDown,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import {
   collection,
   query,
-  onSnapshot,
+  getDocs,
   doc,
   onSnapshot as docOnSnapshot,
+  startAfter,
+  QueryDocumentSnapshot,
+  limit,
+  QueryConstraint,
+  FieldPath,
+  orderBy,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
@@ -36,12 +43,12 @@ import { db } from '@/lib/firebase';
 // TYPES
 // ═══════════════════════════════════════════════════
 interface TransactionItem {
-  id: string;                       // document ID
-  timestamp?: string;               // "16 May 2026, 3:30 PM"
-  transactionType?: string;          // "credit" | "debit"
-  transactionId?: string;            // "TJ2456987965" | "EDM118PRDxxx" | "EDM118RFDxxx"
-  amount?: number;                   // PAISA (always positive, sign determined by transactionType)
-  status?: string;                   // "success" | "completed" | "pending" | "failed"
+  id: string;
+  timestamp?: string;
+  transactionType?: string;
+  transactionId?: string;
+  amount?: number;
+  status?: string;
   description?: string;
   tournamentId?: string;
   tournamentType?: string;
@@ -53,7 +60,7 @@ interface TransactionItem {
   referralBonusUsed?: number;
   refundPercent?: number;
   walletBalanceAfter?: number;
-  category?: string;                 // "entryFee" | "priceDistribution" | "refund"
+  category?: string;
   paymentStatus?: string;
   upiId?: string;
   processedAt?: any;
@@ -65,8 +72,10 @@ interface TransactionItem {
 }
 
 // ═══════════════════════════════════════════════════
-// FILTER TABS — Only 3 active types (no deposit/withdrawal yet)
+// CONSTANTS
 // ═══════════════════════════════════════════════════
+const PAGE_SIZE = 10;
+
 const filterTabs = [
   { key: 'all', label: 'All' },
   { key: 'deposit', label: 'Deposit' },
@@ -84,23 +93,19 @@ function formatCoins(paisa: number): string {
   return coins % 1 === 0 ? `${Math.round(coins)} Coins` : `${parseFloat(coins.toFixed(2))} Coins`;
 }
 
-// ── Safe Timestamp — Firestore Timestamp {seconds, nanoseconds} → string
 function safeTimestamp(val: any): string {
   if (!val) return '';
   if (typeof val === 'string') return val;
   if (val && typeof val === 'object' && 'seconds' in val) {
-    // Firestore Timestamp
     const d = new Date(val.seconds * 1000 + (val.nanoseconds || 0) / 1e6);
     return d.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true });
   }
   return String(val);
 }
 
-// ── Timestamp Parser — "17 May 2026, 01:11 am" / "16 May 2026, 3:30 PM" → Date
 function parseTxnTimestamp(ts: string): Date | null {
   if (!ts || typeof ts !== 'string') return null;
   try {
-    // Format: "16 May 2026, 3:30 PM" or "17 May 2026, 01:11 am" or "17 May 2026, 7:50 AM IST"
     const cleaned = ts.replace(/IST$/i, '').trim();
     const date = new Date(cleaned);
     if (!isNaN(date.getTime())) return date;
@@ -110,26 +115,17 @@ function parseTxnTimestamp(ts: string): Date | null {
   }
 }
 
-// ── Category Detection — Matches Firestore data from 3 functions ──
-// entryFee (joining)   → category: "entryFee",      transactionType: "credit"
-// priceDistribution    → category: "priceDistribution", transactionType: "debit"
-// refund               → category: "refund",         transactionType: "debit"
 function getTransactionCategory(doc: Record<string, any>): string {
   const category = (doc.category || '').toLowerCase();
   const txnType = (doc.transactionType || '').toLowerCase();
 
-  // Withdrawal check first
   if (txnType === 'withdrawal') return 'withdrawal';
-
-  // Direct category match (most reliable)
   if (category === 'deposit') return 'deposit';
   if (category === 'entryfee') return 'entry_fee';
   if (category === 'prizedistribution') return 'prize';
   if (category === 'refund') return 'refund';
 
-  // Fallback: infer from transactionType
   if (txnType === 'credit') {
-    // Deposit has utr field, entry_fee has playerName
     if (doc.utr) return 'deposit';
     return 'entry_fee';
   }
@@ -147,21 +143,17 @@ function getTransactionCategory(doc: Record<string, any>): string {
   return 'other';
 }
 
-// ── Credit/Debit — Based on transactionType field ──
 function isCredit(txn: TransactionItem): boolean {
   const raw = txn._raw || {};
   if (raw.transactionType === 'credit') return true;
   if (raw.transactionType === 'debit') return false;
-
-  // Fallback: infer from category
   const cat = getTransactionCategory(raw);
   if (cat === 'entry_fee' || cat === 'deposit') return true;
-  return false; // prize, refund, all debits
+  return false;
 }
 
 function getTxnIcon(txn: TransactionItem): { icon: React.ReactNode; bg: string } {
   const cat = getTransactionCategory(txn._raw || {});
-
   switch (cat) {
     case 'deposit':
       return { icon: <CircleDollarSign className="w-5 h-5" />, bg: 'bg-amber-500/15 text-amber-400' };
@@ -181,42 +173,29 @@ function getTxnIcon(txn: TransactionItem): { icon: React.ReactNode; bg: string }
 function getTxnTitle(txn: TransactionItem): string {
   const raw = txn._raw || {};
   const cat = getTransactionCategory(raw);
-
   switch (cat) {
-    case 'deposit':
-      return 'Deposit via UPI';
-    case 'entry_fee':
-      return raw.playerName ? `Entry Fee: ${raw.playerName}` : 'Entry Fee Received';
-    case 'prize':
-      return 'Prize Distribution';
-    case 'refund':
-      return raw.playerName ? `Refund: ${raw.playerName}` : 'Refund Processed';
-    case 'withdrawal':
-      return 'Withdrawal Request';
-    default:
-      return 'Transaction';
+    case 'deposit': return 'Deposit via UPI';
+    case 'entry_fee': return raw.playerName ? `Entry Fee: ${raw.playerName}` : 'Entry Fee Received';
+    case 'prize': return 'Prize Distribution';
+    case 'refund': return raw.playerName ? `Refund: ${raw.playerName}` : 'Refund Processed';
+    case 'withdrawal': return 'Withdrawal Request';
+    default: return 'Transaction';
   }
 }
 
 function getTxnSubtitle(txn: TransactionItem): string {
   const raw = txn._raw || {};
   const cat = getTransactionCategory(raw);
-
   switch (cat) {
-    case 'deposit':
-      return raw.utr ? `UTR: ${raw.utr}` : 'UPI Payment';
-    case 'entry_fee':
-      return raw.playerUid ? `UID: ${raw.playerUid}` : (raw.tournamentId ? `Tournament: ${raw.tournamentId}` : 'Tournament Joining');
-    case 'prize':
-      return raw.tournamentId ? `Tournament: ${raw.tournamentId}` : 'Winners Paid';
+    case 'deposit': return raw.utr ? `UTR: ${raw.utr}` : 'UPI Payment';
+    case 'entry_fee': return raw.playerUid ? `UID: ${raw.playerUid}` : (raw.tournamentId ? `Tournament: ${raw.tournamentId}` : 'Tournament Joining');
+    case 'prize': return raw.tournamentId ? `Tournament: ${raw.tournamentId}` : 'Winners Paid';
     case 'refund':
       if (raw.playerName && raw.tournamentId) return `${raw.playerName} — ${raw.tournamentId}`;
       if (raw.playerName) return raw.playerName;
       return raw.tournamentId ? `Tournament: ${raw.tournamentId}` : 'Player Refund';
-    case 'withdrawal':
-      return raw.bankDetail || 'Bank / UPI';
-    default:
-      return raw.description || '';
+    case 'withdrawal': return raw.bankDetail || 'Bank / UPI';
+    default: return raw.description || '';
   }
 }
 
@@ -237,105 +216,153 @@ const statusConfig: Record<string, { color: string; icon: React.ReactNode }> = {
 };
 
 // ═══════════════════════════════════════════════════
+// PAGINATION HOOK — Fetches 10 docs at a time from Firestore
+// ═══════════════════════════════════════════════════
+function usePaginatedTransactions(uid: string | null) {
+  const [allTransactions, setAllTransactions] = useState<TransactionItem[]>([]);
+  const [lastDoc, setLastDoc] = useState<QueryDocumentSnapshot | null>(null);
+  const [hasMore, setHasMore] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  // Parse a single Firestore doc into TransactionItem
+  const parseDoc = useCallback((docSnap: QueryDocumentSnapshot): TransactionItem => {
+    const data = docSnap.data();
+    return {
+      id: docSnap.id,
+      _raw: data,
+      timestamp: safeTimestamp(data.timestamp),
+      transactionType: data.transactionType || '',
+      transactionId: data.transactionId || docSnap.id,
+      amount: data.amount || 0,
+      paymentStatus: data.paymentStatus || data.status || '',
+      status: data.status || data.paymentStatus || '',
+      description: data.description || '',
+      tournamentId: data.tournamentId || '',
+      tournamentType: data.tournamentType || '',
+      playerName: data.playerName || '',
+      playerUid: data.playerUid || '',
+      userId: data.userId || '',
+      slotNumber: data.slotNumber || 0,
+      entryFee: data.entryFee || 0,
+      referralBonusUsed: data.referralBonusUsed || 0,
+      refundPercent: data.refundPercent || 0,
+      walletBalanceAfter: data.walletBalanceAfter || 0,
+      category: data.category || '',
+      upiId: data.upiId || '',
+      processedAt: data.processedAt,
+      requestedAt: data.requestedAt,
+      bankDetail: data.bankDetail || '',
+      notes: data.notes || '',
+      walletBalanceBefore: data.walletBalanceBefore || 0,
+    };
+  }, []);
+
+  // Initial load: first PAGE_SIZE docs
+  const loadInitial = useCallback(async () => {
+    if (!uid) return;
+    setLoading(true);
+    try {
+      const txnRef = collection(db, 'hosts', uid, 'transactionHistory');
+      const q = query(txnRef, orderBy(FieldPath.documentId(), 'desc'), limit(PAGE_SIZE));
+      const snap = await getDocs(q);
+      const items: TransactionItem[] = snap.docs.map(parseDoc);
+      setAllTransactions(items);
+      setLastDoc(snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null);
+      setHasMore(snap.docs.length === PAGE_SIZE);
+    } catch (e) {
+      console.error('Initial load error:', e);
+    } finally {
+      setLoading(false);
+    }
+  }, [uid, parseDoc]);
+
+  // Load next PAGE_SIZE docs
+  const loadMore = useCallback(async () => {
+    if (!uid || !hasMore || !lastDoc || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const txnRef = collection(db, 'hosts', uid, 'transactionHistory');
+      const q = query(txnRef, orderBy(FieldPath.documentId(), 'desc'), startAfter(lastDoc), limit(PAGE_SIZE));
+      const snap = await getDocs(q);
+      const newItems: TransactionItem[] = snap.docs.map(parseDoc);
+      setAllTransactions((prev) => [...prev, ...newItems]);
+      setLastDoc(snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null);
+      setHasMore(snap.docs.length === PAGE_SIZE);
+    } catch (e) {
+      console.error('Load more error:', e);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [uid, hasMore, lastDoc, loadingMore, parseDoc]);
+
+  // Reset and reload when uid changes
+  useEffect(() => {
+    setAllTransactions([]);
+    setLastDoc(null);
+    setHasMore(true);
+    loadInitial();
+  }, [loadInitial]);
+
+  return { allTransactions, loading, loadingMore, hasMore, loadMore };
+}
+
+// ═══════════════════════════════════════════════════
 // MAIN PAGE
 // ═══════════════════════════════════════════════════
 export default function WalletPage() {
   const { user, isLoading: authLoading } = useAuth();
   const [activeTab, setActiveTab] = useState('all');
-  const [transactions, setTransactions] = useState<TransactionItem[]>([]);
-  const [loading, setLoading] = useState(true);
   const [walletBalance, setWalletBalance] = useState(0);
   const [selectedTxn, setSelectedTxn] = useState<TransactionItem | null>(null);
 
-  // ── Realtime Transaction History ──
+  // Intersection observer for infinite scroll
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const observerRef = useRef<IntersectionObserver | null>(null);
+
+  // ── Paginated Transactions ──
+  const { allTransactions, loading, loadingMore, hasMore, loadMore } = usePaginatedTransactions(user?.uid || null);
+
+  // ── Infinite scroll: trigger loadMore when bottom sentinel is visible ──
   useEffect(() => {
-    if (authLoading || !user) return;
-
-    const txnRef = collection(db, 'hosts', user.uid, 'transactionHistory');
-    // No orderBy on processedAt — entryFee & priceDistribution docs don't have it.
-    // Firestore silently skips docs missing the ordered field.
-    // Sort by document ID desc in JS instead (Firestore auto-IDs are chronologically ordered).
-    const q = query(txnRef);
-
-    const unsubscribe = onSnapshot(q, (snap) => {
-      const items: TransactionItem[] = [];
-      snap.forEach((doc) => {
-        const data = doc.data();
-        items.push({
-          id: doc.id,
-          _raw: data,
-          timestamp: safeTimestamp(data.timestamp),
-          transactionType: data.transactionType || '',
-          transactionId: data.transactionId || doc.id,
-          amount: data.amount || 0,
-          paymentStatus: data.paymentStatus || data.status || '',
-          status: data.status || data.paymentStatus || '',
-          description: data.description || '',
-          tournamentId: data.tournamentId || '',
-          tournamentType: data.tournamentType || '',
-          playerName: data.playerName || '',
-          playerUid: data.playerUid || '',
-          userId: data.userId || '',
-          slotNumber: data.slotNumber || 0,
-          entryFee: data.entryFee || 0,
-          referralBonusUsed: data.referralBonusUsed || 0,
-          refundPercent: data.refundPercent || 0,
-          walletBalanceAfter: data.walletBalanceAfter || 0,
-          category: data.category || '',
-          upiId: data.upiId || '',
-          processedAt: data.processedAt,
-          requestedAt: data.requestedAt,
-          bankDetail: data.bankDetail || '',
-          notes: data.notes || '',
-          walletBalanceBefore: data.walletBalanceBefore || 0,
-        });
-      });
-      // Sort newest first by timestamp (parsed from "17 May 2026, 01:11 am" format)
-      items.sort((a, b) => {
-        const dateA = parseTxnTimestamp(a.timestamp);
-        const dateB = parseTxnTimestamp(b.timestamp);
-        if (dateB && dateA) return dateB.getTime() - dateA.getTime();
-        if (dateB) return 1;
-        if (dateA) return -1;
-        return 0;
-      });
-      setTransactions(items);
-      setLoading(false);
-    }, (err) => {
-      setLoading(false);
-    });
-
-    return () => unsubscribe();
-  }, [user, authLoading]);
+    if (observerRef.current) observerRef.current.disconnect();
+    observerRef.current = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMore && !loadingMore && !loading) {
+          loadMore();
+        }
+      },
+      { threshold: 0.1 }
+    );
+    if (bottomRef.current) observerRef.current.observe(bottomRef.current);
+    return () => observerRef.current?.disconnect();
+  }, [hasMore, loadingMore, loading, loadMore]);
 
   // ── Realtime Wallet Balance ──
   useEffect(() => {
     if (authLoading || !user) return;
-
     const walletRef = doc(db, 'hosts', user.uid, 'accountBalance', 'wallet');
     const unsubscribe = docOnSnapshot(walletRef, (snap) => {
       if (snap.exists()) {
-        const bal = snap.data()?.walletBalance || 0;
-        setWalletBalance(bal);
+        setWalletBalance(snap.data()?.walletBalance || 0);
       }
     }, () => {});
-
     return () => unsubscribe();
   }, [user, authLoading]);
 
-  // ── Filter transactions ──
+  // ── Client-side filter from already-fetched data ──
   const filtered = useMemo(() => {
-    if (activeTab === 'all') return transactions;
-    return transactions.filter((t) => {
+    if (activeTab === 'all') return allTransactions;
+    return allTransactions.filter((t) => {
       const cat = getTransactionCategory(t._raw || {});
       return cat === activeTab;
     });
-  }, [transactions, activeTab]);
+  }, [allTransactions, activeTab]);
 
-  // ── Stats — Including deposit ──
+  // ── Stats — from fetched data ──
   const stats = useMemo(() => {
     let totalDeposit = 0, totalEntry = 0, totalPrize = 0, totalRefund = 0, totalWithdrawal = 0;
-    transactions.forEach((t) => {
+    allTransactions.forEach((t) => {
       const amt = t.amount || 0;
       const cat = getTransactionCategory(t._raw || {});
       if (cat === 'deposit') totalDeposit += amt;
@@ -345,7 +372,7 @@ export default function WalletPage() {
       else if (cat === 'withdrawal') totalWithdrawal += amt;
     });
     return { totalDeposit, totalEntry, totalPrize, totalRefund, totalWithdrawal };
-  }, [transactions]);
+  }, [allTransactions]);
 
   // ═══════════════════════════════════════════════════
   // DETAIL VIEW
@@ -358,7 +385,6 @@ export default function WalletPage() {
     const txnIcon = getTxnIcon(selectedTxn);
     const category = getTransactionCategory(raw);
 
-    // Category display labels
     const categoryLabels: Record<string, string> = {
       deposit: 'Deposit',
       entry_fee: 'Entry Fee',
@@ -370,7 +396,6 @@ export default function WalletPage() {
 
     return (
       <div className="min-h-screen pb-20 lg:pb-6">
-        {/* Header */}
         <header className="bg-gradient-to-r from-cyan-500 to-teal-700 px-4 lg:px-6 py-6 sticky top-0 z-20">
           <div className="max-w-4xl mx-auto flex items-center gap-3">
             <button onClick={() => setSelectedTxn(null)}
@@ -385,8 +410,6 @@ export default function WalletPage() {
         </header>
 
         <div className="max-w-4xl mx-auto px-4 lg:px-6 py-6 space-y-4">
-
-          {/* Amount Card */}
           <div className="rounded-2xl bg-[oklch(0.16,0.04,290)] border border-[oklch(0.30,0.06,290)] p-5 text-center">
             <div className={`w-16 h-16 rounded-2xl mx-auto mb-3 flex items-center justify-center ${txnIcon.bg}`}>
               {txnIcon.icon}
@@ -402,12 +425,10 @@ export default function WalletPage() {
             )}
           </div>
 
-          {/* Detail Rows */}
           <div className="rounded-2xl bg-[oklch(0.16,0.04,290)] border border-[oklch(0.30,0.06,290)] overflow-hidden">
             <div className="px-4 py-3 bg-[oklch(0.12,0.02,290)] border-b border-[oklch(0.25,0.05,290)]">
               <p className="text-xs font-bold text-[oklch(0.70,0.04,290)]">Transaction Information</p>
             </div>
-
             {[
               { label: 'Transaction ID', value: selectedTxn.transactionId || selectedTxn.id },
               { label: 'Type', value: raw.transactionType === 'credit' ? 'Credit (+)' : raw.transactionType === 'withdrawal' ? 'Withdrawal (-)' : 'Debit (-)' },
@@ -418,6 +439,7 @@ export default function WalletPage() {
               ...(raw.playerName ? [{ label: 'Player Name', value: raw.playerName }] : []),
               ...(raw.playerUid ? [{ label: 'Player UID', value: String(raw.playerUid) }] : []),
               ...(raw.userId ? [{ label: 'User ID', value: raw.userId }] : []),
+              ...(raw.utr ? [{ label: 'UTR', value: raw.utr }] : []),
               ...(selectedTxn.refundPercent ? [{ label: 'Refund Percent', value: `${selectedTxn.refundPercent}%` }] : []),
               ...(selectedTxn.walletBalanceAfter ? [{ label: 'Wallet After', value: formatCoins(selectedTxn.walletBalanceAfter) }] : []),
               ...(selectedTxn.description ? [{ label: 'Description', value: selectedTxn.description }] : []),
@@ -430,7 +452,6 @@ export default function WalletPage() {
               </div>
             ))}
           </div>
-
         </div>
       </div>
     );
@@ -462,13 +483,9 @@ export default function WalletPage() {
             </div>
             <div>
               <p className="text-xs text-[oklch(0.55,0.04,290)]">Total Balance</p>
-              <p className="text-2xl font-bold text-white">
-                {formatCoins(walletBalance)}
-              </p>
+              <p className="text-2xl font-bold text-white">{formatCoins(walletBalance)}</p>
             </div>
           </div>
-
-          {/* Action Buttons */}
           <div className="grid grid-cols-2 gap-3">
             <Link href="/withdrawal">
               <div className="flex items-center justify-center gap-2 py-3 rounded-xl bg-gradient-to-r from-yellow-500 to-amber-600 text-white font-semibold text-sm shadow-lg shadow-yellow-500/20 hover:scale-[1.02] active:scale-[0.98] transition-transform cursor-pointer">
@@ -485,15 +502,15 @@ export default function WalletPage() {
           </div>
         </div>
 
-        {/* Stats — Only 3 active categories */}
+        {/* Stats */}
         <div className="rounded-2xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.30,0.06,290)] p-3">
           <div className="flex gap-2 overflow-x-auto scrollbar-none">
             {[
-              { label: 'Deposited', amount: `+${formatCoins(stats.totalDeposit)}`, color: 'text-emerald-400', icon: CircleDollarSign },
-              { label: 'Entry Fees', amount: `+${formatCoins(stats.totalEntry)}`, color: 'text-green-400', icon: ArrowDownLeft },
-              { label: 'Prize Paid', amount: `-${formatCoins(stats.totalPrize)}`, color: 'text-purple-400', icon: Gift },
-              { label: 'Refunded', amount: `-${formatCoins(stats.totalRefund)}`, color: 'text-orange-400', icon: TrendingDown },
-              { label: 'Withdrawn', amount: `-${formatCoins(stats.totalWithdrawal)}`, color: 'text-yellow-400', icon: Upload },
+              { label: 'Deposited', amount: `+${formatCoins(stats.totalDeposit)}`, color: 'text-amber-400', icon: CircleDollarSign },
+              { label: 'Entry Fees', amount: `+${formatCoins(stats.totalEntry)}`, color: 'text-cyan-400', icon: ArrowDownLeft },
+              { label: 'Prize Paid', amount: `-${formatCoins(stats.totalPrize)}`, color: 'text-red-400', icon: Gift },
+              { label: 'Refunded', amount: `-${formatCoins(stats.totalRefund)}`, color: 'text-violet-400', icon: TrendingDown },
+              { label: 'Withdrawn', amount: `-${formatCoins(stats.totalWithdrawal)}`, color: 'text-orange-400', icon: Upload },
             ].map((stat) => (
               <div key={stat.label}
                 className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[oklch(0.22,0.04,290)] border border-[oklch(0.28,0.05,290)] shrink-0 min-w-[120px]">
@@ -512,10 +529,12 @@ export default function WalletPage() {
           <h2 className="text-lg font-bold bg-gradient-to-r from-cyan-400 to-teal-400 bg-clip-text text-transparent">
             Transaction History
           </h2>
-          <p className="text-[11px] text-[oklch(0.45,0.04,290)] mt-0.5">{transactions.length} total transactions</p>
+          <p className="text-[11px] text-[oklch(0.45,0.04,290)] mt-0.5">
+            {allTransactions.length > 0 ? `Showing ${filtered.length} of ${allTransactions.length} loaded` : 'No transactions yet'}
+          </p>
         </div>
 
-        {/* Filter Tabs — Only 3 active types */}
+        {/* Filter Tabs */}
         <div className="rounded-2xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.30,0.06,290)] p-3">
           <div className="flex gap-2 overflow-x-auto scrollbar-none">
             {filterTabs.map((tab) => (
@@ -552,12 +571,10 @@ export default function WalletPage() {
                 const txnIcon = getTxnIcon(txn);
                 const statusKey = (txn.paymentStatus || txn.status || '').toLowerCase();
                 const st = statusConfig[statusKey];
-                const cat = getTransactionCategory(txn._raw || {});
 
                 return (
                   <button key={txn.id} onClick={() => setSelectedTxn(txn)}
                     className="w-full text-left p-3.5 rounded-xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.25,0.05,290)] hover:border-[oklch(0.35,0.06,290)] transition-colors active:scale-[0.99]">
-
                     <div className="flex items-center gap-3">
                       <div className={`w-10 h-10 rounded-xl ${txnIcon.bg} flex items-center justify-center shrink-0`}>
                         {txnIcon.icon}
@@ -576,8 +593,6 @@ export default function WalletPage() {
                         <ChevronRight className="w-4 h-4 text-[oklch(0.30,0.04,290)]" />
                       </div>
                     </div>
-
-                    {/* Bottom bar */}
                     <div className="flex items-center justify-between mt-2 pt-2 border-t border-[oklch(0.22,0.04,290)]">
                       <p className="text-[10px] text-[oklch(0.35,0.04,290)] truncate font-mono">
                         {txn.transactionId || txn.id}
@@ -596,6 +611,36 @@ export default function WalletPage() {
                   </button>
                 );
               })}
+
+              {/* ── Bottom sentinel for infinite scroll ── */}
+              <div ref={bottomRef} className="h-4" />
+
+              {/* ── Loading more indicator ── */}
+              {loadingMore && (
+                <div className="flex items-center justify-center py-6 gap-2">
+                  <div className="w-5 h-5 border-2 border-cyan-400/30 border-t-cyan-400 rounded-full animate-spin" />
+                  <p className="text-xs text-[oklch(0.45,0.04,290)]">Loading 10 more...</p>
+                </div>
+              )}
+
+              {/* ── End feedback ── */}
+              {!loadingMore && !hasMore && allTransactions.length > 0 && (
+                <div className="flex flex-col items-center py-4 space-y-1">
+                  <div className="w-8 h-8 rounded-full bg-[oklch(0.22,0.04,290)] flex items-center justify-center">
+                    <CheckCircle2 className="w-4 h-4 text-[oklch(0.40,0.04,290)]" />
+                  </div>
+                  <p className="text-xs text-[oklch(0.40,0.04,290)]">All transactions loaded</p>
+                  <p className="text-[10px] text-[oklch(0.30,0.04,290)]">{allTransactions.length} total</p>
+                </div>
+              )}
+
+              {/* ── More available — scroll hint ── */}
+              {!loadingMore && hasMore && !loading && allTransactions.length > 0 && (
+                <div className="flex items-center justify-center py-4 gap-2">
+                  <ChevronDown className="w-4 h-4 text-[oklch(0.35,0.04,290)] animate-bounce" />
+                  <p className="text-[10px] text-[oklch(0.40,0.04,290)]">Scroll to see 10 more</p>
+                </div>
+              )}
             </div>
           )}
         </div>

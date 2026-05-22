@@ -267,42 +267,40 @@ export default function DepositPage() {
           </div>
         )}
 
-        {/* ═══ Step 3 — UTR Verification ═══ */}
-        {qrVisible && (
-          <div className="rounded-2xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.30,0.06,290)] p-4 lg:p-5 space-y-4">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-green-500/20 flex items-center justify-center">
-                <Shield className="w-4 h-4 text-green-400" />
-              </div>
-              <p className="text-sm font-bold text-[oklch(0.70,0.04,290)]">Step 3 — Verify Payment</p>
+        {/* ═══ Verify UTR — Always Visible ═══ */}
+        <div className="rounded-2xl bg-[oklch(0.18,0.04,290)] border border-amber-500/20 p-4 lg:p-5 space-y-4">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-amber-500/20 flex items-center justify-center">
+              <Shield className="w-4 h-4 text-amber-400" />
             </div>
-
-            <div className="space-y-2">
-              <Input
-                type="text"
-                inputMode="numeric"
-                maxLength={12}
-                value={utr}
-                onChange={(e) => setUtr(e.target.value.replace(/[^0-9]/g, '').slice(0, 12))}
-                placeholder="Enter 12-digit UTR from bank"
-                className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)] h-12 rounded-xl text-center font-mono text-base tracking-widest"
-              />
-              <p className="text-[10px] text-[oklch(0.40,0.04,290)]">Enter the 12-digit UTR from your bank payment receipt</p>
-            </div>
-
-            <Button
-              onClick={handleVerifyUTR}
-              disabled={utr.length !== 12 || verifying}
-              className="w-full h-12 rounded-xl bg-gradient-to-r from-green-500 to-emerald-600 text-white font-semibold shadow-lg shadow-green-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              {verifying ? (
-                <><Loader2 className="w-5 h-5 mr-2 animate-spin" /> Verifying UTR...</>
-              ) : (
-                <><Shield className="w-5 h-5 mr-2" /> Verify Payment</>
-              )}
-            </Button>
+            <p className="text-sm font-bold text-[oklch(0.70,0.04,290)]">Verify Payment (UTR)</p>
           </div>
-        )}
+
+          <div className="space-y-2">
+            <Input
+              type="text"
+              inputMode="numeric"
+              maxLength={12}
+              value={utr}
+              onChange={(e) => setUtr(e.target.value.replace(/[^0-9]/g, '').slice(0, 12))}
+              placeholder="Enter 12-digit UTR from bank"
+              className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)] h-12 rounded-xl text-center font-mono text-base tracking-widest"
+            />
+            <p className="text-[10px] text-[oklch(0.40,0.04,290)]">Already paid? Enter the 12-digit bank UTR to verify & add coins</p>
+          </div>
+
+          <Button
+            onClick={handleVerifyUTR}
+            disabled={utr.length !== 12 || verifying}
+            className="w-full h-12 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-white font-semibold shadow-lg shadow-amber-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {verifying ? (
+              <><Loader2 className="w-5 h-5 mr-2 animate-spin" /> Verifying UTR...</>
+            ) : (
+              <><Shield className="w-5 h-5 mr-2" /> Verify Payment</>
+            )}
+          </Button>
+        </div>
 
         {/* ═══ Result ═══ */}
         {result && (
