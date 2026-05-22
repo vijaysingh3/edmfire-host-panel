@@ -52,7 +52,7 @@ export default function DepositPage() {
       return;
     }
 
-    const url = `upi://pay?pa=${BHARATPE_UPI}&pn=EDMFire&am=${amt}&tn=EDMFire%20Host%20Deposit&cu=INR`;
+    const url = `upi://pay?pa=${BHARATPE_UPI}&pn=EDMFire&am=${amt}&tn=HostDeposit&cu=INR`;
     setUpiString(url);
     setQrVisible(true);
     setResult(null);
