@@ -82,6 +82,18 @@ function formatCoins(paisa: number): string {
   return coins % 1 === 0 ? `${Math.round(coins)} Coins` : `${parseFloat(coins.toFixed(2))} Coins`;
 }
 
+// ── Safe Timestamp — Firestore Timestamp {seconds, nanoseconds} → string
+function safeTimestamp(val: any): string {
+  if (!val) return '';
+  if (typeof val === 'string') return val;
+  if (val && typeof val === 'object' && 'seconds' in val) {
+    // Firestore Timestamp
+    const d = new Date(val.seconds * 1000 + (val.nanoseconds || 0) / 1e6);
+    return d.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true });
+  }
+  return String(val);
+}
+
 // ── Timestamp Parser — "17 May 2026, 01:11 am" / "16 May 2026, 3:30 PM" → Date
 function parseTxnTimestamp(ts: string): Date | null {
   if (!ts || typeof ts !== 'string') return null;
@@ -239,7 +251,7 @@ export default function WalletPage() {
         items.push({
           id: doc.id,
           _raw: data,
-          timestamp: data.timestamp || '',
+          timestamp: safeTimestamp(data.timestamp),
           transactionType: data.transactionType || '',
           transactionId: data.transactionId || doc.id,
           amount: data.amount || 0,
