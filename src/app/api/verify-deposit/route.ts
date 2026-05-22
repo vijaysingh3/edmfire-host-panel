@@ -2,12 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 
 // ═══════════════════════════════════════════════════
 // DEPOSIT VERIFICATION PROXY
-// Client → This API → Firebase Function (verifyUTR)
-// Firebase Function handles: AllUTRs lock + BharatPay API + Coins add
+// Client → This API → Firebase Function (hostDepositFunction)
+// Firebase Function handles: AllUTRs lock + BharatPay API + Host Coins add
 // ═══════════════════════════════════════════════════
 
 const FIREBASE_API_KEY = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
-const VERIFY_UTR_URL = 'https://asia-south1-edm-fire-app.cloudfunctions.net/verifyUTR';
+const VERIFY_UTR_URL = 'https://asia-south1-edm-fire-app.cloudfunctions.net/hostDepositFunction';
 
 // Verify Firebase ID token using REST API (no Admin SDK needed)
 async function verifyIdToken(idToken: string): Promise<boolean> {
@@ -58,7 +58,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 3. Forward to Firebase Function verifyUTR
+    // 3. Forward to Firebase Function hostDepositFunction
     const funcRes = await fetch(VERIFY_UTR_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
