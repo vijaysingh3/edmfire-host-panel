@@ -164,15 +164,15 @@ function getTxnIcon(txn: TransactionItem): { icon: React.ReactNode; bg: string }
 
   switch (cat) {
     case 'deposit':
-      return { icon: <CircleDollarSign className="w-5 h-5" />, bg: 'bg-emerald-500/15 text-emerald-400' };
+      return { icon: <CircleDollarSign className="w-5 h-5" />, bg: 'bg-amber-500/15 text-amber-400' };
     case 'entry_fee':
-      return { icon: <Gamepad2 className="w-5 h-5" />, bg: 'bg-green-500/15 text-green-400' };
+      return { icon: <Gamepad2 className="w-5 h-5" />, bg: 'bg-cyan-500/15 text-cyan-400' };
     case 'prize':
-      return { icon: <Gift className="w-5 h-5" />, bg: 'bg-purple-500/15 text-purple-400' };
+      return { icon: <Gift className="w-5 h-5" />, bg: 'bg-red-500/15 text-red-400' };
     case 'refund':
-      return { icon: <RotateCcw className="w-5 h-5" />, bg: 'bg-orange-500/15 text-orange-400' };
+      return { icon: <RotateCcw className="w-5 h-5" />, bg: 'bg-violet-500/15 text-violet-400' };
     case 'withdrawal':
-      return { icon: <Upload className="w-5 h-5" />, bg: 'bg-yellow-500/15 text-yellow-400' };
+      return { icon: <Upload className="w-5 h-5" />, bg: 'bg-orange-500/15 text-orange-400' };
     default:
       return { icon: <Wallet className="w-5 h-5" />, bg: 'bg-[oklch(0.22,0.04,290)] text-[oklch(0.55,0.04,290)]' };
   }
