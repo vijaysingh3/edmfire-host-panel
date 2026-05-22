@@ -183,6 +183,23 @@ function getTxnMeta(txn: TransactionItem): string {
 }
 
 // ═══════════════════════════════════════════════════
+// SORT HELPER — Extract ms from any timestamp format
+// ═══════════════════════════════════════════════════
+function getTimestampMs(raw: Record<string, any>): number {
+  const ts = raw.timestamp;
+  if (!ts) return 0;
+  if (ts && typeof ts === 'object' && 'seconds' in ts) {
+    return ts.seconds * 1000 + (ts.nanoseconds || 0) / 1e6;
+  }
+  if (typeof ts === 'number') return ts;
+  if (typeof ts === 'string') {
+    const d = new Date(ts);
+    return isNaN(d.getTime()) ? 0 : d.getTime();
+  }
+  return 0;
+}
+
+// ═══════════════════════════════════════════════════
 // STATUS CONFIG
 // ═══════════════════════════════════════════════════
 const statusConfig: Record<string, { color: string; icon: React.ReactNode }> = {
@@ -241,6 +258,8 @@ export default function WalletPage() {
             walletBalanceBefore: data.walletBalanceBefore || 0,
           };
         });
+        // Sort newest → oldest
+        items.sort((a, b) => getTimestampMs(b._raw || {}) - getTimestampMs(a._raw || {}));
         setAllTransactions(items);
       })
       .catch((e) => console.error('Transaction fetch error:', e))
