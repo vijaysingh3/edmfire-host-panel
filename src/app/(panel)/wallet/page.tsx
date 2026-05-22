@@ -20,6 +20,7 @@ import {
   RotateCcw,
   Gift,
   Upload,
+  CircleDollarSign,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import {
@@ -68,6 +69,7 @@ interface TransactionItem {
 // ═══════════════════════════════════════════════════
 const filterTabs = [
   { key: 'all', label: 'All' },
+  { key: 'deposit', label: 'Deposit' },
   { key: 'entry_fee', label: 'Entry Fee' },
   { key: 'prize', label: 'Prize Dist.' },
   { key: 'refund', label: 'Refund' },
@@ -120,12 +122,17 @@ function getTransactionCategory(doc: Record<string, any>): string {
   if (txnType === 'withdrawal') return 'withdrawal';
 
   // Direct category match (most reliable)
+  if (category === 'deposit') return 'deposit';
   if (category === 'entryfee') return 'entry_fee';
   if (category === 'prizedistribution') return 'prize';
   if (category === 'refund') return 'refund';
 
   // Fallback: infer from transactionType
-  if (txnType === 'credit') return 'entry_fee';
+  if (txnType === 'credit') {
+    // Deposit has utr field, entry_fee has playerName
+    if (doc.utr) return 'deposit';
+    return 'entry_fee';
+  }
   if (txnType === 'debit') {
     if ((doc.tournamentId || '').includes('RFD')) return 'refund';
     if (doc.refundPercent !== undefined) return 'refund';
@@ -148,7 +155,7 @@ function isCredit(txn: TransactionItem): boolean {
 
   // Fallback: infer from category
   const cat = getTransactionCategory(raw);
-  if (cat === 'entry_fee') return true;
+  if (cat === 'entry_fee' || cat === 'deposit') return true;
   return false; // prize, refund, all debits
 }
 
@@ -156,6 +163,8 @@ function getTxnIcon(txn: TransactionItem): { icon: React.ReactNode; bg: string }
   const cat = getTransactionCategory(txn._raw || {});
 
   switch (cat) {
+    case 'deposit':
+      return { icon: <CircleDollarSign className="w-5 h-5" />, bg: 'bg-emerald-500/15 text-emerald-400' };
     case 'entry_fee':
       return { icon: <Gamepad2 className="w-5 h-5" />, bg: 'bg-green-500/15 text-green-400' };
     case 'prize':
@@ -174,6 +183,8 @@ function getTxnTitle(txn: TransactionItem): string {
   const cat = getTransactionCategory(raw);
 
   switch (cat) {
+    case 'deposit':
+      return 'Deposit via UPI';
     case 'entry_fee':
       return raw.playerName ? `Entry Fee: ${raw.playerName}` : 'Entry Fee Received';
     case 'prize':
@@ -192,6 +203,8 @@ function getTxnSubtitle(txn: TransactionItem): string {
   const cat = getTransactionCategory(raw);
 
   switch (cat) {
+    case 'deposit':
+      return raw.utr ? `UTR: ${raw.utr}` : 'UPI Payment';
     case 'entry_fee':
       return raw.playerUid ? `UID: ${raw.playerUid}` : (raw.tournamentId ? `Tournament: ${raw.tournamentId}` : 'Tournament Joining');
     case 'prize':
@@ -319,18 +332,19 @@ export default function WalletPage() {
     });
   }, [transactions, activeTab]);
 
-  // ── Stats — Only 3 active categories ──
+  // ── Stats — Including deposit ──
   const stats = useMemo(() => {
-    let totalEntry = 0, totalPrize = 0, totalRefund = 0, totalWithdrawal = 0;
+    let totalDeposit = 0, totalEntry = 0, totalPrize = 0, totalRefund = 0, totalWithdrawal = 0;
     transactions.forEach((t) => {
       const amt = t.amount || 0;
       const cat = getTransactionCategory(t._raw || {});
-      if (cat === 'entry_fee') totalEntry += amt;
+      if (cat === 'deposit') totalDeposit += amt;
+      else if (cat === 'entry_fee') totalEntry += amt;
       else if (cat === 'prize') totalPrize += amt;
       else if (cat === 'refund') totalRefund += amt;
       else if (cat === 'withdrawal') totalWithdrawal += amt;
     });
-    return { totalEntry, totalPrize, totalRefund, totalWithdrawal };
+    return { totalDeposit, totalEntry, totalPrize, totalRefund, totalWithdrawal };
   }, [transactions]);
 
   // ═══════════════════════════════════════════════════
@@ -346,6 +360,7 @@ export default function WalletPage() {
 
     // Category display labels
     const categoryLabels: Record<string, string> = {
+      deposit: 'Deposit',
       entry_fee: 'Entry Fee',
       prize: 'Prize Distribution',
       refund: 'Refund',
@@ -474,6 +489,7 @@ export default function WalletPage() {
         <div className="rounded-2xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.30,0.06,290)] p-3">
           <div className="flex gap-2 overflow-x-auto scrollbar-none">
             {[
+              { label: 'Deposited', amount: `+${formatCoins(stats.totalDeposit)}`, color: 'text-emerald-400', icon: CircleDollarSign },
               { label: 'Entry Fees', amount: `+${formatCoins(stats.totalEntry)}`, color: 'text-green-400', icon: ArrowDownLeft },
               { label: 'Prize Paid', amount: `-${formatCoins(stats.totalPrize)}`, color: 'text-purple-400', icon: Gift },
               { label: 'Refunded', amount: `-${formatCoins(stats.totalRefund)}`, color: 'text-orange-400', icon: TrendingDown },
