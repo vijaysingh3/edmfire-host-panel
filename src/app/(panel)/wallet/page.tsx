@@ -1,11 +1,10 @@
 'use client';
 
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import {
   Wallet,
   ArrowDownLeft,
-  ArrowUpRight,
   TrendingDown,
   TrendingUp,
   Plus,
@@ -13,7 +12,6 @@ import {
   CheckCircle2,
   Clock,
   XCircle,
-  X,
   ChevronRight,
   ArrowLeft,
   Gamepad2,
@@ -21,7 +19,6 @@ import {
   Gift,
   Upload,
   CircleDollarSign,
-  ChevronDown,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import {
@@ -30,12 +27,6 @@ import {
   getDocs,
   doc,
   onSnapshot as docOnSnapshot,
-  startAfter,
-  QueryDocumentSnapshot,
-  limit,
-  QueryConstraint,
-  FieldPath,
-  orderBy,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
@@ -74,8 +65,6 @@ interface TransactionItem {
 // ═══════════════════════════════════════════════════
 // CONSTANTS
 // ═══════════════════════════════════════════════════
-const PAGE_SIZE = 10;
-
 const filterTabs = [
   { key: 'all', label: 'All' },
   { key: 'deposit', label: 'Deposit' },
@@ -101,18 +90,6 @@ function safeTimestamp(val: any): string {
     return d.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true });
   }
   return String(val);
-}
-
-function parseTxnTimestamp(ts: string): Date | null {
-  if (!ts || typeof ts !== 'string') return null;
-  try {
-    const cleaned = ts.replace(/IST$/i, '').trim();
-    const date = new Date(cleaned);
-    if (!isNaN(date.getTime())) return date;
-    return null;
-  } catch {
-    return null;
-  }
 }
 
 function getTransactionCategory(doc: Record<string, any>): string {
@@ -216,127 +193,59 @@ const statusConfig: Record<string, { color: string; icon: React.ReactNode }> = {
 };
 
 // ═══════════════════════════════════════════════════
-// PAGINATION HOOK — Fetches 10 docs at a time from Firestore
-// ═══════════════════════════════════════════════════
-function usePaginatedTransactions(uid: string | null) {
-  const [allTransactions, setAllTransactions] = useState<TransactionItem[]>([]);
-  const [lastDoc, setLastDoc] = useState<QueryDocumentSnapshot | null>(null);
-  const [hasMore, setHasMore] = useState(true);
-  const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-
-  // Parse a single Firestore doc into TransactionItem
-  const parseDoc = useCallback((docSnap: QueryDocumentSnapshot): TransactionItem => {
-    const data = docSnap.data();
-    return {
-      id: docSnap.id,
-      _raw: data,
-      timestamp: safeTimestamp(data.timestamp),
-      transactionType: data.transactionType || '',
-      transactionId: data.transactionId || docSnap.id,
-      amount: data.amount || 0,
-      paymentStatus: data.paymentStatus || data.status || '',
-      status: data.status || data.paymentStatus || '',
-      description: data.description || '',
-      tournamentId: data.tournamentId || '',
-      tournamentType: data.tournamentType || '',
-      playerName: data.playerName || '',
-      playerUid: data.playerUid || '',
-      userId: data.userId || '',
-      slotNumber: data.slotNumber || 0,
-      entryFee: data.entryFee || 0,
-      referralBonusUsed: data.referralBonusUsed || 0,
-      refundPercent: data.refundPercent || 0,
-      walletBalanceAfter: data.walletBalanceAfter || 0,
-      category: data.category || '',
-      upiId: data.upiId || '',
-      processedAt: data.processedAt,
-      requestedAt: data.requestedAt,
-      bankDetail: data.bankDetail || '',
-      notes: data.notes || '',
-      walletBalanceBefore: data.walletBalanceBefore || 0,
-    };
-  }, []);
-
-  // Initial load: first PAGE_SIZE docs
-  const loadInitial = useCallback(async () => {
-    if (!uid) return;
-    setLoading(true);
-    try {
-      const txnRef = collection(db, 'hosts', uid, 'transactionHistory');
-      const q = query(txnRef, orderBy(FieldPath.documentId(), 'desc'), limit(PAGE_SIZE));
-      const snap = await getDocs(q);
-      const items: TransactionItem[] = snap.docs.map(parseDoc);
-      setAllTransactions(items);
-      setLastDoc(snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null);
-      setHasMore(snap.docs.length === PAGE_SIZE);
-    } catch (e) {
-      console.error('Initial load error:', e);
-    } finally {
-      setLoading(false);
-    }
-  }, [uid, parseDoc]);
-
-  // Load next PAGE_SIZE docs
-  const loadMore = useCallback(async () => {
-    if (!uid || !hasMore || !lastDoc || loadingMore) return;
-    setLoadingMore(true);
-    try {
-      const txnRef = collection(db, 'hosts', uid, 'transactionHistory');
-      const q = query(txnRef, orderBy(FieldPath.documentId(), 'desc'), startAfter(lastDoc), limit(PAGE_SIZE));
-      const snap = await getDocs(q);
-      const newItems: TransactionItem[] = snap.docs.map(parseDoc);
-      setAllTransactions((prev) => [...prev, ...newItems]);
-      setLastDoc(snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null);
-      setHasMore(snap.docs.length === PAGE_SIZE);
-    } catch (e) {
-      console.error('Load more error:', e);
-    } finally {
-      setLoadingMore(false);
-    }
-  }, [uid, hasMore, lastDoc, loadingMore, parseDoc]);
-
-  // Reset and reload when uid changes
-  useEffect(() => {
-    setAllTransactions([]);
-    setLastDoc(null);
-    setHasMore(true);
-    loadInitial();
-  }, [loadInitial]);
-
-  return { allTransactions, loading, loadingMore, hasMore, loadMore };
-}
-
-// ═══════════════════════════════════════════════════
 // MAIN PAGE
 // ═══════════════════════════════════════════════════
 export default function WalletPage() {
   const { user, isLoading: authLoading } = useAuth();
   const [activeTab, setActiveTab] = useState('all');
   const [walletBalance, setWalletBalance] = useState(0);
+  const [allTransactions, setAllTransactions] = useState<TransactionItem[]>([]);
+  const [loading, setLoading] = useState(true);
   const [selectedTxn, setSelectedTxn] = useState<TransactionItem | null>(null);
 
-  // Intersection observer for infinite scroll
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const observerRef = useRef<IntersectionObserver | null>(null);
-
-  // ── Paginated Transactions ──
-  const { allTransactions, loading, loadingMore, hasMore, loadMore } = usePaginatedTransactions(user?.uid || null);
-
-  // ── Infinite scroll: trigger loadMore when bottom sentinel is visible ──
+  // ── Fetch All Transactions (no pagination) ──
   useEffect(() => {
-    if (observerRef.current) observerRef.current.disconnect();
-    observerRef.current = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting && hasMore && !loadingMore && !loading) {
-          loadMore();
-        }
-      },
-      { threshold: 0.1 }
-    );
-    if (bottomRef.current) observerRef.current.observe(bottomRef.current);
-    return () => observerRef.current?.disconnect();
-  }, [hasMore, loadingMore, loading, loadMore]);
+    if (authLoading || !user) return;
+    setLoading(true);
+    const txnRef = collection(db, 'hosts', user.uid, 'transactionHistory');
+    getDocs(txnRef)
+      .then((snap) => {
+        const items: TransactionItem[] = snap.docs.map((docSnap) => {
+          const data = docSnap.data();
+          return {
+            id: docSnap.id,
+            _raw: data,
+            timestamp: safeTimestamp(data.timestamp),
+            transactionType: data.transactionType || '',
+            transactionId: data.transactionId || docSnap.id,
+            amount: data.amount || 0,
+            paymentStatus: data.paymentStatus || data.status || '',
+            status: data.status || data.paymentStatus || '',
+            description: data.description || '',
+            tournamentId: data.tournamentId || '',
+            tournamentType: data.tournamentType || '',
+            playerName: data.playerName || '',
+            playerUid: data.playerUid || '',
+            userId: data.userId || '',
+            slotNumber: data.slotNumber || 0,
+            entryFee: data.entryFee || 0,
+            referralBonusUsed: data.referralBonusUsed || 0,
+            refundPercent: data.refundPercent || 0,
+            walletBalanceAfter: data.walletBalanceAfter || 0,
+            category: data.category || '',
+            upiId: data.upiId || '',
+            processedAt: data.processedAt,
+            requestedAt: data.requestedAt,
+            bankDetail: data.bankDetail || '',
+            notes: data.notes || '',
+            walletBalanceBefore: data.walletBalanceBefore || 0,
+          };
+        });
+        setAllTransactions(items);
+      })
+      .catch((e) => console.error('Transaction fetch error:', e))
+      .finally(() => setLoading(false));
+  }, [user, authLoading]);
 
   // ── Realtime Wallet Balance ──
   useEffect(() => {
@@ -350,7 +259,7 @@ export default function WalletPage() {
     return () => unsubscribe();
   }, [user, authLoading]);
 
-  // ── Client-side filter from already-fetched data ──
+  // ── Client-side filter ──
   const filtered = useMemo(() => {
     if (activeTab === 'all') return allTransactions;
     return allTransactions.filter((t) => {
@@ -359,7 +268,7 @@ export default function WalletPage() {
     });
   }, [allTransactions, activeTab]);
 
-  // ── Stats — from fetched data ──
+  // ── Stats ──
   const stats = useMemo(() => {
     let totalDeposit = 0, totalEntry = 0, totalPrize = 0, totalRefund = 0, totalWithdrawal = 0;
     allTransactions.forEach((t) => {
@@ -530,7 +439,7 @@ export default function WalletPage() {
             Transaction History
           </h2>
           <p className="text-[11px] text-[oklch(0.45,0.04,290)] mt-0.5">
-            {allTransactions.length > 0 ? `Showing ${filtered.length} of ${allTransactions.length} loaded` : 'No transactions yet'}
+            {allTransactions.length > 0 ? `${filtered.length} transaction${filtered.length !== 1 ? 's' : ''}` : 'No transactions yet'}
           </p>
         </div>
 
@@ -611,36 +520,6 @@ export default function WalletPage() {
                   </button>
                 );
               })}
-
-              {/* ── Bottom sentinel for infinite scroll ── */}
-              <div ref={bottomRef} className="h-4" />
-
-              {/* ── Loading more indicator ── */}
-              {loadingMore && (
-                <div className="flex items-center justify-center py-6 gap-2">
-                  <div className="w-5 h-5 border-2 border-cyan-400/30 border-t-cyan-400 rounded-full animate-spin" />
-                  <p className="text-xs text-[oklch(0.45,0.04,290)]">Loading 10 more...</p>
-                </div>
-              )}
-
-              {/* ── End feedback ── */}
-              {!loadingMore && !hasMore && allTransactions.length > 0 && (
-                <div className="flex flex-col items-center py-4 space-y-1">
-                  <div className="w-8 h-8 rounded-full bg-[oklch(0.22,0.04,290)] flex items-center justify-center">
-                    <CheckCircle2 className="w-4 h-4 text-[oklch(0.40,0.04,290)]" />
-                  </div>
-                  <p className="text-xs text-[oklch(0.40,0.04,290)]">All transactions loaded</p>
-                  <p className="text-[10px] text-[oklch(0.30,0.04,290)]">{allTransactions.length} total</p>
-                </div>
-              )}
-
-              {/* ── More available — scroll hint ── */}
-              {!loadingMore && hasMore && !loading && allTransactions.length > 0 && (
-                <div className="flex items-center justify-center py-4 gap-2">
-                  <ChevronDown className="w-4 h-4 text-[oklch(0.35,0.04,290)] animate-bounce" />
-                  <p className="text-[10px] text-[oklch(0.40,0.04,290)]">Scroll to see 10 more</p>
-                </div>
-              )}
             </div>
           )}
         </div>
