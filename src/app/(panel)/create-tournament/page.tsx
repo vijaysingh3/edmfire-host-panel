@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
@@ -600,8 +600,17 @@ export default function CreateTournamentPage() {
     }
   };
 
-  // ── Available IDs for selected update type ──
-  const availableIds = updateType ? (hostTournaments[updateType] || []) : [];
+  // ── Available IDs for selected update type (top 8 biggest = latest) ──
+  const availableIds = useMemo(() => {
+    const ids = updateType ? (hostTournaments[updateType] || []) : [];
+    return [...ids]
+      .sort((a, b) => {
+        const numA = parseInt(String(a), 10);
+        const numB = parseInt(String(b), 10);
+        return (isNaN(numB) ? 0 : numB) - (isNaN(numA) ? 0 : numA);
+      })
+      .slice(0, 8);
+  }, [updateType, hostTournaments]);
 
   return (
     <div className="min-h-screen">
