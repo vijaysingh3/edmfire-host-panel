@@ -452,6 +452,16 @@ export default function CreateTournamentPage() {
         return;
       }
 
+      // ── Security: Check host ownership ──
+      if (data.HostUID && data.HostUID !== user?.uid) {
+        toast.error('Access Denied', { description: 'This tournament belongs to another host.' });
+        setLoading(false);
+        setUpdateId('');
+        setCurrentTournamentData(null);
+        clearForm();
+        return;
+      }
+
       setCurrentTournamentData(data);
 
       // Populate form — Kotlin: populateForm()
@@ -507,6 +517,15 @@ export default function CreateTournamentPage() {
       return;
     }
     if (!validateRequired()) return;
+
+    // ── Security: Re-check host ownership before update ──
+    if (currentTournamentData.HostUID && currentTournamentData.HostUID !== user?.uid) {
+      toast.error('Access Denied', { description: 'This tournament belongs to another host.' });
+      setCurrentTournamentData(null);
+      clearForm();
+      setUpdateId('');
+      return;
+    }
 
     setLoading(true);
     toast.info('Updating tournament...');
