@@ -167,29 +167,80 @@ export default function ResultsPage() {
   const [players, setPlayers] = useState<PlayerData[]>([]);
   const [showRevertBtn, setShowRevertBtn] = useState(false);
 
-  // ── Filtered players — Kotlin scored search equivalent ──
+  // ── HIGH SENSITIVITY search — handles Unicode, decorative, styled names ──
+  // Normalizes: removes invisible chars, decomposes Unicode, strips decorators
+  const normalizeStr = (s: string): string => {
+    return s
+      .normalize('NFKD')                    // decompose ᴺ → N, ᴛ → t, ᴀ → a, etc.
+      .replace(/[\u200B-\u200D\uFEFF]/g, '') // zero-width spaces
+      .replace(/[\u2060-\u206F]/g, '')       // invisible format chars
+      .replace(/[\u00AD\u034F]/g, '')        // soft hyphen, combining grapheme joiner
+      .replace(/[ㅤᅠᅟ⠀⠀⣱⣲⣵]/g, '')      // Korean hangul filler, braille patterns
+      .replace(/[·•∗⁎★☆⭐※✦✧✩✪✫✬✭✮✯✰✱✲✳✴✵✶✷✸✹✺✻✼✽✾✿❀❁❂❃❄❅❆❇❈❉❊❋]/g, '')
+      .replace(/[\u25A0-\u25FF\u2600-\u27BF\u2B50-\u2B55]/g, '') // shapes, arrows
+      .replace(/[꧁꧂༺༻ψω∿♢♡♧♤♥♦♩♪♫♬♭♮♯]/g, '')  // decorative borders, symbols
+      .replace(/[᭄ꭄᭅꭅ⓿❶❷❸❹❺❻❼❽❾❿⓫⓬⓭⓮⓯⓰⓱⓲⓳⓴⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾]/g, '') // numeric circles
+      .replace(/[═╬║╔╗╚╝╠╣╦╩╬─│┌┐└┘├┤┬┴┼]/g, '') // box drawing
+      .replace(/[\uE000-\uF8FF]/g, '')       // private use area
+      .replace(/[\uFFF0-\uFFFF]/g, '')        // specials
+      .replace(/[☝✞✇$#@%&*+=~`'";:,.<>?!\^()\[\]{}|\\\/_\-]/g, '')
+      .replace(/\s+/g, '')                    // collapse all spaces
+      .toLowerCase();
+  };
+
   const filteredPlayers = (() => {
     if (!searchQuery.trim()) return players;
     const q = searchQuery.trim();
     const lowerQ = q.toLowerCase();
+    const normQ = normalizeStr(q);
+
     const scored = players.map(p => {
       const name = p.inGameName;
-      const uid = p.inGameUID;
+      const uid = String(p.inGameUID);
+      const lowerName = name.toLowerCase();
+      const normName = normalizeStr(name);
+
       let score = 0;
+
+      // UID exact/partial
       if (uid === q) score = 1000;
       else if (uid.startsWith(q)) score = 950;
       else if (uid.includes(q)) score = 900;
-      else if (name.toLowerCase() === lowerQ) score = 800;
-      else if (name.toLowerCase().startsWith(lowerQ)) score = 700;
-      else if (name.split(' ').some(w => w.toLowerCase() === lowerQ)) score = 650;
-      else if (name.toLowerCase().includes(lowerQ)) score = 500;
-      else {
-        const cleanName = name.replace(/[^A-Za-z0-9\s]/g, '').toLowerCase();
-        const cleanQ = lowerQ.replace(/[^a-z0-9]/g, '');
-        if (cleanName === cleanQ) score = 400;
-        else if (cleanName.startsWith(cleanQ)) score = 350;
-        else if (cleanName.includes(cleanQ)) score = 300;
+
+      // Name exact match
+      if (lowerName === lowerQ) score = Math.max(score, 850);
+      else if (name === q) score = Math.max(score, 860);
+
+      // Name starts with
+      if (lowerName.startsWith(lowerQ)) score = Math.max(score, 750);
+
+      // Any word match in name (space separated)
+      if (name.split(/[\s_\-]+/).some(w => w.toLowerCase() === lowerQ)) score = Math.max(score, 700);
+
+      // Normalized match (stripped all decorations)
+      if (normName === normQ) score = Math.max(score, 600);
+      else if (normName.startsWith(normQ)) score = Math.max(score, 550);
+      else if (normName.includes(normQ)) score = Math.max(score, 450);
+
+      // Basic stripped match (only letters + digits)
+      const basicName = name.replace(/[^A-Za-z0-9]/g, '').toLowerCase();
+      const basicQ = lowerQ.replace(/[^a-z0-9]/g, '');
+      if (basicName === basicQ) score = Math.max(score, 400);
+      else if (basicName.startsWith(basicQ)) score = Math.max(score, 350);
+      else if (basicName.includes(basicQ)) score = Math.max(score, 280);
+
+      // Character-level fuzzy: check if query chars appear in order within normalized name
+      if (score === 0 && normQ.length >= 2) {
+        let qi = 0;
+        for (let ni = 0; ni < normName.length && qi < normQ.length; ni++) {
+          if (normName[ni] === normQ[qi]) qi++;
+        }
+        if (qi === normQ.length) score = Math.max(score, 150);
       }
+
+      // Partial: if name contains query as substring in any form
+      if (score === 0 && lowerName.includes(lowerQ)) score = Math.max(score, 200);
+
       return { player: p, score };
     }).filter(s => s.score > 0).sort((a, b) => b.score - a.score);
     return scored.map(s => s.player);
