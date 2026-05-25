@@ -600,16 +600,14 @@ export default function CreateTournamentPage() {
     }
   };
 
-  // ── Available IDs for selected update type (top 8 biggest = latest) ──
+  // ── Available IDs for selected update type (biggest first) ──
   const availableIds = useMemo(() => {
     const ids = updateType ? (hostTournaments[updateType] || []) : [];
-    return [...ids]
-      .sort((a, b) => {
-        const numA = parseInt(String(a), 10);
-        const numB = parseInt(String(b), 10);
-        return (isNaN(numB) ? 0 : numB) - (isNaN(numA) ? 0 : numA);
-      })
-      .slice(0, 8);
+    return [...ids].sort((a, b) => {
+      const numA = parseInt(String(a), 10);
+      const numB = parseInt(String(b), 10);
+      return (isNaN(numB) ? 0 : numB) - (isNaN(numA) ? 0 : numA);
+    });
   }, [updateType, hostTournaments]);
 
   return (
