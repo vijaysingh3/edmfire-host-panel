@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
@@ -430,12 +430,12 @@ export default function CreateTournamentPage() {
 
   // Load tournament data from RTDB — Kotlin: loadTournamentData()
   const handleLoadTournament = async () => {
-    if (!updateType || updateType === '__placeholder__') {
+    if (!updateType) {
       toast.error('Select tournament type');
       return;
     }
-    if (!updateId || updateId === '__placeholder__') {
-      toast.error('Select tournament ID');
+    if (!updateId) {
+      toast.error('Enter tournament ID');
       return;
     }
 
@@ -600,16 +600,6 @@ export default function CreateTournamentPage() {
     }
   };
 
-  // ── Available IDs for selected update type (biggest first) ──
-  const availableIds = useMemo(() => {
-    const ids = updateType ? (hostTournaments[updateType] || []) : [];
-    return [...ids].sort((a, b) => {
-      const numA = parseInt(String(a), 10);
-      const numB = parseInt(String(b), 10);
-      return (isNaN(numB) ? 0 : numB) - (isNaN(numA) ? 0 : numA);
-    });
-  }, [updateType, hostTournaments]);
-
   return (
     <div className="min-h-screen">
       <header className="bg-gradient-to-r from-orange-400 to-orange-600 px-4 lg:px-6 py-6 sticky top-0 z-20">
@@ -667,28 +657,30 @@ export default function CreateTournamentPage() {
               </Select>
             </div>
 
-            {/* Tournament ID Dropdown — Kotlin: spinnerUpdateTournamentId */}
+            {/* Tournament ID — Manual Input with EDM_ prefix */}
             <div className="space-y-2">
               <Label className="text-xs text-[oklch(0.65,0.04,290)]">Tournament ID</Label>
-              <Select value={updateId} onValueChange={setUpdateId}>
-                <SelectTrigger className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white h-12 rounded-xl">
-                  <SelectValue placeholder="Select Tournament ID" />
-                </SelectTrigger>
-                <SelectContent>
-                  {availableIds.length > 0
-                    ? availableIds.map((id) => (
-                        <SelectItem key={id} value={id}>{id}</SelectItem>
-                      ))
-                    : <SelectItem value="__placeholder__" disabled>
-                        {updateType ? 'No IDs for this type' : 'Select type first'}
-                      </SelectItem>
-                  }
-                </SelectContent>
-              </Select>
+              <div className="relative">
+                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-mono font-bold text-[oklch(0.55,0.04,290)] pointer-events-none select-none">EDM_</span>
+                <Input
+                  type="text"
+                  inputMode="numeric"
+                  value={updateId.startsWith('EDM_') ? updateId.slice(4) : updateId}
+                  onChange={(e) => {
+                    const numbers = e.target.value.replace(/[^0-9]/g, '');
+                    setUpdateId(numbers ? `EDM_${numbers}` : '');
+                  }}
+                  placeholder="Enter numbers only"
+                  className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)] h-12 rounded-xl pl-14 font-mono text-base tracking-wider"
+                />
+              </div>
+              {updateId && (
+                <p className="text-[10px] text-[oklch(0.50,0.04,290)] font-mono">Preview: <span className="text-cyan-400">{updateId}</span></p>
+              )}
             </div>
 
             {/* Load Button — Kotlin: btnLoadTournament */}
-            <Button onClick={handleLoadTournament} disabled={loading || !updateId || updateId === '__placeholder__'}
+            <Button onClick={handleLoadTournament} disabled={loading || !updateId}
               className="w-full h-12 rounded-xl bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-semibold shadow-lg shadow-blue-500/20 disabled:opacity-40 disabled:cursor-not-allowed">
               {loading ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> :
                 <><RefreshCw className="w-4 h-4 mr-2" /> Load Tournament Data</>}
