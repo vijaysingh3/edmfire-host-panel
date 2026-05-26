@@ -637,6 +637,30 @@ export default function PrizePage() {
         return;
       }
 
+      // ── Insufficient Balance — custom alert with details ──
+      const insufficientBalance = json.insufficientBalance === true;
+      if (insufficientBalance) {
+        const balPaisa = json.walletBalance || 0;
+        const neededPaisa = json.totalNeeded || 0;
+        const shortPaisa = json.shortage || 0;
+        const balCoins = parseFloat((balPaisa / 100).toFixed(2));
+        const neededCoins = parseFloat((neededPaisa / 100).toFixed(2));
+        const shortCoins = parseFloat((shortPaisa / 100).toFixed(2));
+
+        appendLog(`❌ INSUFFICIENT BALANCE!`, 'ERROR');
+        appendLog(`   Your Balance: ${balCoins} Coins`, 'ERROR');
+        appendLog(`   Required: ${neededCoins} Coins`, 'ERROR');
+        appendLog(`   Shortage: ${shortCoins} Coins`, 'ERROR');
+        appendLog(`   Action: Deposit ${shortCoins} Coins before distributing.`, 'WARNING');
+
+        toast.error('Insufficient Balance!', {
+          description: `You have ${balCoins} Coins but need ${neededCoins} Coins. Short by ${shortCoins} Coins. Please deposit first.`,
+          duration: 8000,
+        });
+
+        return;
+      }
+
       const success = json.success === true;
       const message = json.message || 'No message provided';
 
