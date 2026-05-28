@@ -113,6 +113,23 @@ export default function Dashboard() {
           </p>
         </div>
 
+        {/* tutorial button */}
+        <a
+          href="https://host.edmfire.in/tutorial"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-3 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 rounded-xl px-5 py-3.5 text-white shadow-lg hover:scale-[1.02] active:scale-[0.98] transition-all duration-200 cursor-pointer w-fit"
+        >
+          <span className="text-2xl">📖</span>
+          <div>
+            <p className="font-bold text-sm lg:text-base">Host Tutorial Guide</p>
+            <p className="text-[11px] text-white/70">Sabhi steps ka Hindi guide — Click karke padhein</p>
+          </div>
+          <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 ml-1 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+          </svg>
+        </a>
+
         {/* step-by-step grid */}
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 lg:gap-4">
           {steps.map((step, index) => (
