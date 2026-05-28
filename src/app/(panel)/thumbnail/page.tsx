@@ -4,8 +4,6 @@ import { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { useAuth } from '@/context/AuthContext';
-// Cloud Function URL from Vercel ENV (no Remote Config)
-const UNIVERSAL_IMAGE_UPLOADER_URL = process.env.NEXT_PUBLIC_UNIVERSAL_IMAGE_UPLOADER_URL || '';
 import {
   collection,
   query,
@@ -14,7 +12,8 @@ import {
   addDoc,
   Timestamp,
 } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { db, storage } from '@/lib/firebase';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import {
   Image as ImageIcon,
   Upload,
@@ -23,7 +22,6 @@ import {
   Copy,
   X,
   ImagePlus,
-  Trash2,
 } from 'lucide-react';
 
 // ── Thumbnail model — Kotlin ThumbnailModel jaisa ──
@@ -32,16 +30,6 @@ interface ThumbnailItem {
   title: string;
   url: string;
   uploadedAt: string;
-}
-
-// ── Helper: File ko Base64 me convert ──
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
 }
 
 export default function ThumbnailPage() {
@@ -57,28 +45,15 @@ export default function ThumbnailPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [thumbnails, setThumbnails] = useState<ThumbnailItem[]>([]);
   const [loadingList, setLoadingList] = useState(true);
-  const [uploaderUrl, setUploaderUrl] = useState('');
   const [refreshing, setRefreshing] = useState(false);
 
-  // ── Init: Remote Config fetch + thumbnails load ──
+  // ── Init: thumbnails load ──
   useEffect(() => {
     if (authLoading) return;
-    init();
-  }, [user, authLoading]);
-
-  const init = async () => {
-    const url = UNIVERSAL_IMAGE_UPLOADER_URL;
-    setUploaderUrl(url);
-
-    if (!url) {
-      toast.error('Config Error', { description: 'NEXT_PUBLIC_UNIVERSAL_IMAGE_UPLOADER_URL is empty in Vercel ENV' });
-    }
-
-    // Thumbnails fetch
     if (user) {
       fetchAllThumbnails();
     }
-  };
+  }, [user, authLoading]);
 
   // ── Firestore se saare thumbnails fetch karo ──
   // Kotlin: fetchAllThumbnails() — Hosts/{userId}/myThumbnails, orderBy uploadedAt DESC
@@ -152,70 +127,40 @@ export default function ThumbnailPage() {
     setPreviewUrl(null);
   };
 
-  // ── Upload image to Cloud Function — Kotlin me uploadImage() tha ──
+  // ── Upload image directly to Firebase Storage ──
   const handleUpload = async () => {
     if (!selectedFile || !user) return;
-
-    if (!uploaderUrl) {
-      toast.error('Config not loaded', { description: 'Upload URL not available. Check RemoteConfig.' });
-      return;
-    }
 
     setUploading(true);
     setUploadedUrl('');
 
     try {
-      // Bitmap → Base64 (Kotlin me Bitmap.CompressFormat.JPEG, 85 quality)
-      const base64 = await fileToBase64(selectedFile);
+      // Firebase Storage path: hosts/{uid}/thumbnails/{timestamp}_{filename}
+      const fileName = `${Date.now()}_${selectedFile.name}`;
+      const storageRef = ref(storage, `hosts/${user.uid}/thumbnails/${fileName}`);
 
-      // Request body — Kotlin me JSONObject bana tha same format me
-      const requestBody = {
-        folder: `hosts/${user.uid}`,
-        images: [{ base64 }],
-      };
+      // Upload bytes directly to Firebase Storage
+      await uploadBytes(storageRef, selectedFile);
 
-      const response = await fetch(uploaderUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody),
+      // Get public download URL
+      const url = await getDownloadURL(storageRef);
+
+      // ✅ Firestore me save — hosts/{hostId}/myThumbnails
+      await addDoc(collection(db, 'hosts', user.uid, 'myThumbnails'), {
+        fileName,
+        url,
+        uploadedAt: Timestamp.now(),
+        title: selectedFile.name,
       });
 
-      if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`Upload failed (${response.status}): ${errText}`);
-      }
+      setUploadedUrl(url);
+      setUploadedFileName(fileName);
+      toast.success('Thumbnail Uploaded!', { description: 'Saved to Firebase Storage + Firestore' });
 
-      const result = await response.json();
-      const isSuccess = result.success === true;
+      // List refresh
+      fetchAllThumbnails();
 
-      if (!isSuccess) {
-        throw new Error(result.error || 'Upload failed');
-      }
-
-      // Response parse — Kotlin me responseJson.optJSONArray("uploaded") tha
-      const uploaded = result.uploaded?.[0];
-      const url = uploaded?.url || '';
-      const fileName = uploaded?.fileName || '';
-
-      if (url) {
-        // ✅ Firestore me save — Kotlin me saveThumbnailToFirestore() tha
-        // Path: hosts/{hostId}/myThumbnails
-        await addDoc(collection(db, 'hosts', user.uid, 'myThumbnails'), {
-          fileName,
-          url,
-          uploadedAt: Timestamp.now(),
-          title: selectedFile.name,
-        });
-
-        setUploadedUrl(url);
-        setUploadedFileName(fileName);
-        toast.success('Thumbnail Uploaded!', { description: 'Saved to Cloud Storage + Firestore' });
-
-        // List refresh — Kotlin me bhi fetchAllThumbnails() call hota tha save ke baad
-        fetchAllThumbnails();
-      }
-
-      // Form reset — Kotlin me bhi same reset hota tha
+      // Form reset
       setSelectedFile(null);
       if (previewUrl) URL.revokeObjectURL(previewUrl);
       setPreviewUrl(null);
@@ -452,12 +397,6 @@ export default function ThumbnailPage() {
           )}
         </div>
 
-        {/* Config status indicator */}
-        <div className="text-center py-3">
-          <p className="text-[10px] text-[oklch(0.35,0.04,290)]">
-            {uploaderUrl ? '✅ Remote Config connected' : '⚠️ Config loading...'}
-          </p>
-        </div>
       </div>
     </div>
   );
