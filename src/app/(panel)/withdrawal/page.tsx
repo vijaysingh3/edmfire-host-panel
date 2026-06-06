@@ -88,6 +88,11 @@ export default function WithdrawalPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
+  // ── 30% Platform Fee Calculation (real-time) ──
+  const inputCoins = Number(coinsInput) || 0;
+  const platformFee = inputCoins * 0.30;
+  const finalCoins = inputCoins * 0.70;
+
   // ═══════════════════════════════════════════════════
   // REALTIME WALLET BALANCE
   // ═══════════════════════════════════════════════════
@@ -179,7 +184,9 @@ export default function WithdrawalPage() {
         return;
       }
 
-      const amountPaisa = Math.round(coins * 100);
+      // 70% amount after 30% platform fee cut
+      const afterFeeCoins = coins * 0.70;
+      const amountPaisa = Math.round(afterFeeCoins * 100);
 
       const res = await fetch(funcUrl, {
         method: 'POST',
@@ -195,7 +202,7 @@ export default function WithdrawalPage() {
 
       if (data.success) {
         toast.success('Withdrawal submitted!', {
-          description: `${coins} Coins — ${data.transactionId || ''}`,
+          description: `Input: ${coins} Coins | Fee: 30% (${Math.round(coins * 0.30)} Coins) | Sent: ${Math.round(afterFeeCoins)} Coins — ${data.transactionId || ''}`,
         });
         // Clear form
         setBankDetail('');
@@ -317,6 +324,32 @@ export default function WithdrawalPage() {
               </div>
             </div>
 
+            {/* ✅ Platform Fee Display — real-time 30% cut info */}
+            {inputCoins > 0 && (
+              <div className="rounded-xl bg-green-500/10 border border-green-500/25 px-4 py-3 space-y-2">
+                <div className="flex items-center gap-2">
+                  <div className="w-5 h-5 rounded-full bg-green-500/20 flex items-center justify-center shrink-0">
+                    <span className="text-[10px] font-bold text-green-400">%</span>
+                  </div>
+                  <p className="text-xs font-bold text-green-400">Platform Fee Breakdown</p>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="text-center">
+                    <p className="text-[10px] text-[oklch(0.45,0.04,290)]">Total Input</p>
+                    <p className="text-sm font-bold text-white">{inputCoins} Coins</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-[10px] text-[oklch(0.45,0.04,290)]">Fee (30%)</p>
+                    <p className="text-sm font-bold text-red-400">-{platformFee % 1 === 0 ? Math.round(platformFee) : platformFee.toFixed(1)} Coins</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-[10px] text-[oklch(0.45,0.04,290)]">You Receive</p>
+                    <p className="text-sm font-bold text-green-400">{finalCoins % 1 === 0 ? Math.round(finalCoins) : finalCoins.toFixed(1)} Coins</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Warning — Insufficient Balance */}
             {coinsInput && Number(coinsInput) > balanceCoins && (
               <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20">
@@ -338,7 +371,7 @@ export default function WithdrawalPage() {
               ) : (
                 <ArrowUpRight className="w-4 h-4" />
               )}
-              SUBMIT WITHDRAWAL
+              SUBMIT WITHDRAWAL — {finalCoins % 1 === 0 ? Math.round(finalCoins) : finalCoins.toFixed(1)} Coins (after 30% fee)
             </button>
           </div>
         </div>
