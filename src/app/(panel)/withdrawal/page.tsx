@@ -88,10 +88,30 @@ export default function WithdrawalPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
-  // ── 30% Platform Fee Calculation (real-time) ──
+  // ── Platform Fee — read from Firestore host doc (default 30%) ──
+  const [feePercent, setFeePercent] = useState(30);
   const inputCoins = Number(coinsInput) || 0;
-  const platformFee = inputCoins * 0.30;
-  const finalCoins = inputCoins * 0.70;
+  const feeRate = feePercent / 100;
+  const platformFee = inputCoins * feeRate;
+  const finalCoins = inputCoins - platformFee;
+
+  // ═══════════════════════════════════════════════════
+  // REALTIME: Host doc — read platformFeePercent
+  // ═══════════════════════════════════════════════════
+  useEffect(() => {
+    if (authLoading || !user) return;
+
+    const hostRef = doc(db, 'hosts', user.uid);
+    const unsubscribe = onSnapshot(hostRef, (snap) => {
+      if (snap.exists()) {
+        const fee = snap.data()?.platformFeePercent;
+        // Use Firestore value if valid number > 0, else default 30
+        setFeePercent((typeof fee === 'number' && fee > 0) ? fee : 30);
+      }
+    }, () => {});
+
+    return () => unsubscribe();
+  }, [user, authLoading]);
 
   // ═══════════════════════════════════════════════════
   // REALTIME WALLET BALANCE
@@ -184,8 +204,8 @@ export default function WithdrawalPage() {
         return;
       }
 
-      // 70% amount after 30% platform fee cut
-      const afterFeeCoins = coins * 0.70;
+      // Amount after platform fee cut (dynamic %)
+      const afterFeeCoins = coins * (1 - feeRate);
       const amountPaisa = Math.round(afterFeeCoins * 100);
 
       const res = await fetch(funcUrl, {
@@ -202,7 +222,7 @@ export default function WithdrawalPage() {
 
       if (data.success) {
         toast.success('Withdrawal submitted!', {
-          description: `Input: ${coins} Coins | Fee: 30% (${Math.round(coins * 0.30)} Coins) | Sent: ${Math.round(afterFeeCoins)} Coins — ${data.transactionId || ''}`,
+          description: `Input: ${coins} Coins | Fee: ${feePercent}% (${Math.round(coins * feeRate)} Coins) | Sent: ${Math.round(afterFeeCoins)} Coins — ${data.transactionId || ''}`,
         });
         // Clear form
         setBankDetail('');
@@ -339,7 +359,7 @@ export default function WithdrawalPage() {
                     <p className="text-sm font-bold text-white">{inputCoins} Coins</p>
                   </div>
                   <div className="text-center">
-                    <p className="text-[10px] text-[oklch(0.45,0.04,290)]">Fee (30%)</p>
+                    <p className="text-[10px] text-[oklch(0.45,0.04,290)]">Fee ({feePercent}%)</p>
                     <p className="text-sm font-bold text-red-400">-{platformFee % 1 === 0 ? Math.round(platformFee) : platformFee.toFixed(1)} Coins</p>
                   </div>
                   <div className="text-center">
@@ -371,7 +391,7 @@ export default function WithdrawalPage() {
               ) : (
                 <ArrowUpRight className="w-4 h-4" />
               )}
-              SUBMIT WITHDRAWAL — {finalCoins % 1 === 0 ? Math.round(finalCoins) : finalCoins.toFixed(1)} Coins (after 30% fee)
+              SUBMIT WITHDRAWAL — {finalCoins % 1 === 0 ? Math.round(finalCoins) : finalCoins.toFixed(1)} Coins (after {feePercent}% fee)
             </button>
           </div>
         </div>
