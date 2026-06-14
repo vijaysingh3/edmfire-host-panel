@@ -29,6 +29,9 @@ import {
   RefreshCw,
   Save,
   ArrowRight,
+  Copy,
+  X,
+  Layers,
 } from 'lucide-react';
 
 // ═══════════════════════════════════════════════════
@@ -150,6 +153,53 @@ function parseRTDBDateTime(dtStr: string): { date: string; hour: string; minute:
   return { date: dateISO, hour: String(h12).padStart(2, '0'), minute: String(mm).padStart(2, '0'), ampm };
 }
 
+// ═══════════════════════════════════════════════════
+// ADD MINUTES TO DATETIME — for bulk creation time shifting
+// Takes date/hour/minute/ampm + minutesToAdd → shifted { date, hour, minute, ampm }
+// ═══════════════════════════════════════════════════
+function addMinutesToDateTime(
+  dateStr: string,
+  hour: string,
+  minute: string,
+  ampm: string,
+  minutesToAdd: number
+): { date: string; hour: string; minute: string; ampm: 'AM' | 'PM' } {
+  // Parse to JS Date
+  let hour24 = parseInt(hour, 10) || 12;
+  if (ampm.toUpperCase() === 'PM' && hour24 !== 12) hour24 += 12;
+  if (ampm.toUpperCase() === 'AM' && hour24 === 12) hour24 = 0;
+
+  const [y, m, d] = dateStr.split('-');
+  const dateObj = new Date(
+    parseInt(y, 10),
+    parseInt(m, 10) - 1,
+    parseInt(d, 10),
+    hour24,
+    parseInt(minute, 10) || 0,
+    0
+  );
+
+  // Add minutes
+  dateObj.setTime(dateObj.getTime() + minutesToAdd * 60000);
+
+  // Convert back to fields
+  const newYear = dateObj.getFullYear();
+  const newMonth = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const newDay = String(dateObj.getDate()).padStart(2, '0');
+  const newHour24 = dateObj.getHours();
+  const newMin = dateObj.getMinutes();
+
+  const h12 = newHour24 % 12 || 12;
+  const newAmpm: 'AM' | 'PM' = newHour24 >= 12 ? 'PM' : 'AM';
+
+  return {
+    date: `${newYear}-${newMonth}-${newDay}`,
+    hour: String(h12).padStart(2, '0'),
+    minute: String(newMin).padStart(2, '0'),
+    ampm: newAmpm,
+  };
+}
+
 export default function CreateTournamentPage() {
   const { user, isLoading: authLoading } = useAuth();
 
@@ -191,6 +241,17 @@ export default function CreateTournamentPage() {
   const [updateType, setUpdateType] = useState('');
   const [updateId, setUpdateId] = useState('');
   const [currentTournamentData, setCurrentTournamentData] = useState<Record<string, any> | null>(null);
+
+  // ── Multi-Create Dialog State ──
+  const [showMultiDialog, setShowMultiDialog] = useState(false);
+  const [multiCount, setMultiCount] = useState('5');
+  const [multiGapMinutes, setMultiGapMinutes] = useState('30');
+  const [multiStartDate, setMultiStartDate] = useState('');
+  const [multiStartHour, setMultiStartHour] = useState('12');
+  const [multiStartMinute, setMultiStartMinute] = useState('00');
+  const [multiStartAmPm, setMultiStartAmPm] = useState<'AM' | 'PM'>('PM');
+  const [multiProgress, setMultiProgress] = useState(0);
+  const [multiCreatedIds, setMultiCreatedIds] = useState<string[]>([]);
 
   // ── Load tournaments list for update mode ──
   const loadHostTournaments = useCallback(async () => {
@@ -381,6 +442,152 @@ export default function CreateTournamentPage() {
 
     } catch (e: any) {
       toast.error('Creation Failed', { description: e.message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ═══════════════════════════════════════════════
+  // BULK CREATE — Create Multiple Tournaments
+  // ═══════════════════════════════════════════════
+  const handleMultiCreate = async () => {
+    if (!user) {
+      toast.error('Not logged in');
+      return;
+    }
+    if (!validateRequired()) return;
+
+    if (!tournamentType) {
+      toast.error('Tournament Type is required');
+      return;
+    }
+
+    const count = parseInt(multiCount) || 0;
+    const gapMinutes = parseInt(multiGapMinutes) || 0;
+
+    if (count < 2 || count > 50) {
+      toast.error('Number of tournaments must be between 2 and 50');
+      return;
+    }
+    if (gapMinutes < 1) {
+      toast.error('Time gap must be at least 1 minute');
+      return;
+    }
+    if (!multiStartDate) {
+      toast.error('Starting date is required');
+      return;
+    }
+
+    setMultiProgress(0);
+    setMultiCreatedIds([]);
+    setLoading(true);
+
+    const createdIds: string[] = [];
+
+    try {
+      // Get all existing IDs once at the start
+      const allIdsData = await rtdbGet('AllTournamentsID');
+      let existingIds = allIdsData ? Object.keys(allIdsData) : [];
+
+      // Pre-build the common tournament data (same for all, except DateTime)
+      const joiningFeePaisa = rupeesToPaisa(parseFloat(joiningFee) || 0);
+      const perKillPaisa = rupeesToPaisa(parseFloat(perKill) || 0);
+      const pricePoolPaisa = rupeesToPaisa(parseFloat(pricePool) || 0);
+
+      for (let i = 0; i < count; i++) {
+        // Generate new ID using the latest existing IDs (updated each iteration)
+        const newId = existingIds.length > 0
+          ? generateNewTournamentId(existingIds)
+          : `EDM_${100 + i}`;
+        existingIds.push(newId); // Add so next iteration generates next ID
+
+        // Calculate shifted datetime
+        const shifted = addMinutesToDateTime(multiStartDate, multiStartHour, multiStartMinute, multiStartAmPm, i * gapMinutes);
+        const formattedDT = formatDateTimeForRTDB(shifted.date, shifted.hour, shifted.minute, shifted.ampm);
+
+        const now = new Date().toLocaleString('en-IN', {
+          day: '2-digit', month: '2-digit', year: 'numeric',
+          hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+        });
+
+        // Register ID in RTDB
+        const idRegistered = await rtdbPut(`AllTournamentsID/${newId}`, {
+          createdAt: now,
+          createdBy: user.uid,
+          tournamentId: newId,
+          isActive: true,
+        });
+        if (!idRegistered) {
+          throw new Error(`Failed to register tournament ID: ${newId}`);
+        }
+
+        // Build tournament data
+        const tournamentData: Record<string, any> = {
+          Title: title,
+          Description: description,
+          BannerUrl: bannerUrl,
+          DateTime: formattedDT,
+          JoinedPlayersCount: 0,
+          JoiningFee: joiningFeePaisa,
+          ReferralUseAmount: parseInt(referralUseAmount) || 0,
+          Map: map,
+          Mode: gameMode,
+          PerKill: perKillPaisa,
+          PricePool: pricePoolPaisa,
+          RoomID: roomId,
+          RoomPassword: roomPassword,
+          SlotNumbers: parseInt(slotNumbers) || 0,
+          Status: 'Upcoming',
+          Type: type,
+          VideoUrl: videoUrl,
+          HostUID: user.uid,
+          ResultStatus: false,
+          PaymentStatus: false,
+          CreatedAt: now,
+          LastUpdated: now,
+        };
+
+        // Save Meta
+        const metaPath = `Tournaments/TournamentMeta/${tournamentType}/${newId}`;
+        const metaData = { ...tournamentData };
+
+        // Save Details
+        const detailsPath = `Tournaments/TournamentDetails/${tournamentType}/${newId}`;
+        const detailsData = { ...tournamentData };
+        delete detailsData.BannerUrl;
+        detailsData.JoinedPlayers = {};
+
+        const metaSuccess = await rtdbPut(metaPath, metaData);
+        if (!metaSuccess) throw new Error(`Failed to save tournament meta: ${newId}`);
+
+        const detailsSuccess = await rtdbPut(detailsPath, detailsData);
+        if (!detailsSuccess) throw new Error(`Failed to save tournament details: ${newId}`);
+
+        // Save reference to Firestore
+        await addDoc(collection(db, 'hosts', user.uid, 'myMatches'), {
+          tournamentId: newId,
+          tournamentType: tournamentType,
+        });
+
+        createdIds.push(newId);
+        setMultiProgress(i + 1);
+        setMultiCreatedIds([...createdIds]);
+      }
+
+      // Update TournamentsCount in one go
+      try {
+        const countData = await rtdbGet('Tournaments/TournamentsCount');
+        const counts: Record<string, number> = countData || {};
+        counts[tournamentType] = (counts[tournamentType] || 0) + count;
+        await rtdbPut('Tournaments/TournamentsCount', counts);
+      } catch (e) {
+        // count update failed, non-critical
+      }
+
+      toast.success(`${count} Tournaments Created!`, { description: `IDs: ${createdIds.join(', ')}` });
+
+    } catch (e: any) {
+      toast.error('Bulk Creation Failed', { description: e.message });
     } finally {
       setLoading(false);
     }
@@ -948,7 +1155,212 @@ export default function CreateTournamentPage() {
             <><ArrowRight className="w-5 h-5 mr-2" /> Update Tournament</>
           )}
         </Button>
+
+        {/* Create Multiple Tournaments — Create mode only */}
+        {mode === 'create' && (
+          <Button
+            onClick={() => {
+              // Pre-fill dialog with current form date/time
+              setMultiStartDate(dateOnly);
+              setMultiStartHour(timeHour);
+              setMultiStartMinute(timeMinute);
+              setMultiStartAmPm(timeAmPm);
+              setMultiProgress(0);
+              setMultiCreatedIds([]);
+              setShowMultiDialog(true);
+            }}
+            disabled={loading}
+            variant="outline"
+            className="w-full h-12 rounded-xl text-orange-400 border-orange-500/40 font-semibold text-base hover:bg-orange-500/10 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Layers className="w-5 h-5 mr-2" /> Create Multiple Tournaments
+          </Button>
+        )}
       </div>
+
+      {/* ═══════════════════════════════════════════════ */}
+      {/* MULTI-CREATE DIALOG                          */}
+      {/* ═══════════════════════════════════════════════ */}
+      {showMultiDialog && (
+        <div
+          className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowMultiDialog(false);
+          }}
+        >
+          <div className="bg-[oklch(0.16,0.04,290)] border border-[oklch(0.30,0.06,290)] rounded-2xl w-full max-w-md p-5 space-y-4 shadow-2xl relative">
+            {/* Close button */}
+            <button
+              onClick={() => setShowMultiDialog(false)}
+              className="absolute top-3 right-3 w-8 h-8 rounded-lg bg-[oklch(0.22,0.04,290)] border border-[oklch(0.35,0.06,290)] flex items-center justify-center text-[oklch(0.60,0.04,290)] hover:text-white hover:bg-[oklch(0.30,0.06,290)] transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <h2 className="text-lg font-bold text-white flex items-center gap-2">
+              <Layers className="w-5 h-5 text-orange-400" />
+              Create Multiple Tournaments
+            </h2>
+            <p className="text-xs text-[oklch(0.55,0.04,290)]">
+              Same form data, different times. Each tournament gets a unique ID and shifted start time.
+            </p>
+
+            {/* Number of Tournaments */}
+            <div className="space-y-1.5">
+              <Label className="text-xs text-[oklch(0.70,0.04,290)] font-semibold">Number of Tournaments</Label>
+              <Input
+                type="number"
+                min={2}
+                max={50}
+                value={multiCount}
+                onChange={(e) => setMultiCount(e.target.value.replace(/[^0-9]/g, '').slice(0, 2))}
+                placeholder="2–50"
+                className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)] h-11 rounded-xl"
+                disabled={loading}
+              />
+            </div>
+
+            {/* Time Gap */}
+            <div className="space-y-1.5">
+              <Label className="text-xs text-[oklch(0.70,0.04,290)] font-semibold">Time Gap (minutes)</Label>
+              <Input
+                type="number"
+                min={1}
+                value={multiGapMinutes}
+                onChange={(e) => setMultiGapMinutes(e.target.value.replace(/[^0-9]/g, ''))}
+                placeholder="e.g. 30"
+                className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)] h-11 rounded-xl"
+                disabled={loading}
+              />
+            </div>
+
+            {/* Starting Time — Date + Hour + Minute + AM/PM */}
+            <div className="space-y-1.5">
+              <Label className="text-xs text-[oklch(0.70,0.04,290)] font-semibold">Starting Time</Label>
+              <Input
+                type="date"
+                value={multiStartDate}
+                onChange={(e) => setMultiStartDate(e.target.value)}
+                className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white h-11 rounded-xl"
+                disabled={loading}
+              />
+              <div className="grid grid-cols-3 gap-2">
+                <Input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={2}
+                  value={multiStartHour}
+                  onChange={(e) => setMultiStartHour(e.target.value.replace(/[^0-9]/g, '').slice(0, 2))}
+                  placeholder="HH"
+                  className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white h-11 rounded-xl text-center font-mono text-base"
+                  disabled={loading}
+                />
+                <Input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={2}
+                  value={multiStartMinute}
+                  onChange={(e) => setMultiStartMinute(e.target.value.replace(/[^0-9]/g, '').slice(0, 2))}
+                  placeholder="MM"
+                  className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white h-11 rounded-xl text-center font-mono text-base"
+                  disabled={loading}
+                />
+                <Select value={multiStartAmPm} onValueChange={(v) => setMultiStartAmPm(v as 'AM' | 'PM')} disabled={loading}>
+                  <SelectTrigger className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white h-11 rounded-xl text-center">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="AM">AM</SelectItem>
+                    <SelectItem value="PM">PM</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Progress Display */}
+            {(loading && multiProgress > 0) || multiCreatedIds.length > 0 ? (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-[oklch(0.70,0.04,290)] font-semibold">
+                    {loading
+                      ? `Creating ${multiProgress} of ${parseInt(multiCount) || '?'}...`
+                      : multiCreatedIds.length > 0
+                        ? `Done — ${multiCreatedIds.length} created`
+                        : ''}
+                  </span>
+                  {loading && (
+                    <div className="w-4 h-4 border-2 border-orange-400/30 border-t-orange-400 rounded-full animate-spin" />
+                  )}
+                </div>
+                {/* Progress bar */}
+                {loading && (parseInt(multiCount) || 0) > 0 && (
+                  <div className="w-full h-2 bg-[oklch(0.22,0.04,290)] rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-orange-500 to-orange-400 rounded-full transition-all duration-300"
+                      style={{ width: `${(multiProgress / (parseInt(multiCount) || 1)) * 100}%` }}
+                    />
+                  </div>
+                )}
+                {/* Created IDs list */}
+                {multiCreatedIds.length > 0 && (
+                  <div className="max-h-40 overflow-y-auto rounded-xl bg-[oklch(0.20,0.04,290)] border border-[oklch(0.30,0.06,290)] p-2 space-y-1">
+                    {multiCreatedIds.map((id, idx) => (
+                      <div
+                        key={id}
+                        className="flex items-center justify-between px-2 py-1 rounded-lg bg-[oklch(0.24,0.04,290)]"
+                      >
+                        <span className="text-xs font-mono text-purple-400 font-bold">{id}</span>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(id);
+                            toast.success('Copied!', { description: id });
+                          }}
+                          className="text-[oklch(0.50,0.04,290)] hover:text-white transition-colors"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : null}
+
+            {/* Start Creating Button */}
+            <Button
+              onClick={handleMultiCreate}
+              disabled={loading}
+              className="w-full h-11 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 text-white font-semibold shadow-lg shadow-orange-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {loading ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2" />
+                  Creating {multiProgress} of {multiCount}...
+                </>
+              ) : (
+                <>
+                  <Layers className="w-4 h-4 mr-2" />
+                  Start Creating
+                </>
+              )}
+            </Button>
+
+            {/* Copy All IDs button — only show after completion */}
+            {!loading && multiCreatedIds.length > 1 && (
+              <Button
+                onClick={() => {
+                  navigator.clipboard.writeText(multiCreatedIds.join('\n'));
+                  toast.success('All IDs copied!');
+                }}
+                variant="outline"
+                className="w-full h-10 rounded-xl text-[oklch(0.70,0.04,290)] border-[oklch(0.35,0.06,290)] font-medium text-sm hover:bg-[oklch(0.25,0.04,290)]"
+              >
+                <Copy className="w-3.5 h-3.5 mr-2" /> Copy All IDs
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
