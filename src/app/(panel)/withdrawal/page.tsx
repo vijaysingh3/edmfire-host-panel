@@ -204,9 +204,8 @@ export default function WithdrawalPage() {
         return;
       }
 
-      // Amount after platform fee cut (dynamic %)
-      const afterFeeCoins = coins * (1 - feeRate);
-      const amountPaisa = Math.round(afterFeeCoins * 100);
+      // Send FULL amount — Cloud Function will calculate & deduct fee
+      const amountPaisa = Math.round(coins * 100);
 
       const res = await fetch(funcUrl, {
         method: 'POST',
@@ -222,7 +221,7 @@ export default function WithdrawalPage() {
 
       if (data.success) {
         toast.success('Withdrawal submitted!', {
-          description: `Input: ${coins} Coins | Fee: ${feePercent}% (${Math.round(coins * feeRate)} Coins) | Sent: ${Math.round(afterFeeCoins)} Coins — ${data.transactionId || ''}`,
+          description: `Input: ${coins} Coins | Fee: ${data.platformFee || `${feePercent}%`} | You Receive: ${data.payoutAmount || '?'} Coins — ${data.transactionId || ''}`,
         });
         // Clear form
         setBankDetail('');
