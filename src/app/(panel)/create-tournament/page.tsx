@@ -233,6 +233,10 @@ export default function CreateTournamentPage() {
   const [videoUrl, setVideoUrl] = useState('');
   const [status, setStatus] = useState('Upcoming');
 
+  // ── Protection (Free Tournaments only) ──
+  const [protection, setProtection] = useState('');
+  const [protectedTournamentId, setProtectedTournamentId] = useState('');
+
   // ── Create Mode State ──
   const [generatedId, setGeneratedId] = useState('');
 
@@ -325,6 +329,8 @@ export default function CreateTournamentPage() {
     setGameMode('');
     setTournamentType('');
     setGeneratedId('');
+    setProtection('');
+    setProtectedTournamentId('');
   };
 
   // ═══════════════════════════════════════════════
@@ -401,6 +407,8 @@ export default function CreateTournamentPage() {
         HostUID: user.uid,
         ResultStatus: false,
         PaymentStatus: false,
+        Protection: (tournamentType === 'FreeTournaments' && protection) ? protection : 'disable',
+        ProtectedTournamentId: (tournamentType === 'FreeTournaments' && protection === 'enable') ? protectedTournamentId.trim() : '',
         CreatedAt: now,
         LastUpdated: now,
       };
@@ -543,6 +551,8 @@ export default function CreateTournamentPage() {
           HostUID: user.uid,
           ResultStatus: false,
           PaymentStatus: false,
+          Protection: (tournamentType === 'FreeTournaments' && protection) ? protection : 'disable',
+          ProtectedTournamentId: (tournamentType === 'FreeTournaments' && protection === 'enable') ? protectedTournamentId.trim() : '',
           CreatedAt: now,
           LastUpdated: now,
         };
@@ -948,6 +958,39 @@ export default function CreateTournamentPage() {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+          )}
+
+          {/* Protection — ONLY for FreeTournaments (Create only) */}
+          {mode === 'create' && tournamentType === 'FreeTournaments' && (
+            <div className="space-y-2">
+              <Label className="text-xs text-[oklch(0.70,0.04,290)] font-semibold">Protection</Label>
+              <Select value={protection} onValueChange={(v) => {
+                setProtection(v);
+                if (v !== 'enable') setProtectedTournamentId('');
+              }}>
+                <SelectTrigger className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white h-12 rounded-xl">
+                  <SelectValue placeholder="Select Protection" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="disable">Disable</SelectItem>
+                  <SelectItem value="enable">Enable</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          {/* Protected Tournament ID — ONLY when Protection = Enable */}
+          {mode === 'create' && tournamentType === 'FreeTournaments' && protection === 'enable' && (
+            <div className="space-y-2">
+              <Label className="text-xs text-[oklch(0.70,0.04,290)] font-semibold">Protected Tournament ID <span className="text-red-400">*</span></Label>
+              <Input
+                value={protectedTournamentId}
+                onChange={(e) => setProtectedTournamentId(e.target.value)}
+                placeholder="Enter Tournament ID"
+                className="bg-[oklch(0.22,0.04,290)] border-[oklch(0.35,0.06,290)] text-white placeholder:text-[oklch(0.40,0.04,290)] h-12 rounded-xl"
+              />
+              <p className="text-[10px] text-amber-400/80">Protection enabled — this tournament will be linked to the entered ID</p>
             </div>
           )}
 
