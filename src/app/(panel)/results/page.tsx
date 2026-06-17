@@ -604,6 +604,7 @@ export default function ResultsPage() {
         Damage: player.damage,
         CoinsEarned: player.coinsEarned,
         Rank: player.rank,
+        Result: player.result,
         PaymentStatus: true,
       };
 
@@ -780,10 +781,14 @@ export default function ResultsPage() {
       // Track manual edit on coins
       if (field === 'coinsEarned') {
         updated.isManuallyEdited = true;
+        // Auto Result: Coins > 0 → win, Coins 0/empty → lose
+        updated.result = (updated.coinsEarned > 0) ? 'win' : 'lose';
       }
       // Auto-calc coins on kill change
       if (field === 'kills' && isAutoCalcEnabled && !updated.isManuallyEdited) {
         updated.coinsEarned = (value as number) * currentPerKillPaisa;
+        // Auto Result after auto-calc coins
+        updated.result = (updated.coinsEarned > 0) ? 'win' : 'lose';
       }
       return updated;
     }));
