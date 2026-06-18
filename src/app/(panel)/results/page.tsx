@@ -133,6 +133,172 @@ function parsePlayerData(playerObj: any, playerKey: string, currentType: string,
   };
 }
 
+// ═══════════════════════════════════════════════════════════════
+// UNICODE GAMING NAME NORMALIZER — module-level constant
+// Converts fancy Unicode gaming names → plain Latin for search
+// ═══════════════════════════════════════════════════════════════
+const SPECIAL_CHAR_MAP: Record<string, string> = {
+  // ── Phonetic Extensions (U+0250-U+02AF) ──
+  'ɐ':'a','ɑ':'a','ɒ':'a','ɓ':'b','ʙ':'b','ɔ':'o','ɕ':'c',
+  'ɖ':'d','ɗ':'d','ə':'e','ɘ':'e','ɛ':'e','ɜ':'e','ɞ':'e',
+  'ɟ':'j','ɡ':'g','ɢ':'g','ɦ':'h','ɧ':'h','ʜ':'h','ɪ':'i',
+  'ɨ':'i','и':'n','ʞ':'k','ɭ':'l','ɱ':'m','ɴ':'n',
+  'ɵ':'o','ɶ':'oe','ɸ':'f','ɹ':'r','ɺ':'r','ɻ':'r','ʁ':'r','ʀ':'r',
+  'ʂ':'s','ʃ':'s','ƭ':'t','ʈ':'t','ʉ':'u','ʊ':'u','ʋ':'v',
+  'ʍ':'w','ʎ':'y','ʏ':'y','ʐ':'z','ʑ':'z','ʒ':'z','ʓ':'z',
+  'ʇ':'t','ɥ':'y','ʛ':'g','ʝ':'j',
+  'ɬ':'l','ʟ':'l','ɲ':'n','ɳ':'n','ŋ':'ng',
+  'œ':'oe',
+  // ── Modifier Letter Small Capitals (U+1D00-U+1D7F) — NFKD does NOT decompose these ──
+  'ᴀ':'a','ᴁ':'ae','ᴂ':'ae','ᴃ':'b','ᴄ':'c','ᴅ':'d','ᴇ':'e',
+  'ᴈ':'e','ᴉ':'i','ᴊ':'j','ᴋ':'k','ᴌ':'l','ᴍ':'m','ᴎ':'n',
+  'ᴏ':'o','ᴐ':'o','ᴘ':'p','ᴙ':'r','ᴚ':'r','ᴛ':'t','ᴜ':'u',
+  'ᴠ':'v','ᴡ':'w','ʏ':'y','ᴢ':'z','ᴑ':'o','ᴒ':'o','ᴓ':'o',
+  // ── Other modifier / decorative ──
+  'Ͳ':'s','ʩ':'sh',
+  'Ƭ':'t','ꀤ':'i','ᑎ':'n','ⵊ':'j','⁄':'',
+  'ܔ':'',
+  // ── Superscript letters (U+1D48-U+1DBF) ──
+  'ᵃ':'a','ᵇ':'b','ᶜ':'c','ᵈ':'d','ᵉ':'e','ᶠ':'f','ᵍ':'g',
+  'ʰ':'h','ⁱ':'i','ʲ':'j','ᵏ':'k','ˡ':'l','ᵐ':'m','ⁿ':'n',
+  'ᵒ':'o','ᵖ':'p','ʳ':'r','ˢ':'s','ᵗ':'t','ᵘ':'u','ᵛ':'v',
+  'ʷ':'w','ˣ':'x','ʸ':'y','ᶻ':'z','ᶝ':'e','ᶞ':'e',
+  'ᶟ':'e','ᶡ':'g','ᶢ':'g','ᶣ':'g','ᶤ':'i','ᶥ':'i',
+  'ᶦ':'i','ᶧ':'i','ᶨ':'k','ᶪ':'l','ᶫ':'l','ᶬ':'m','ᶭ':'m',
+  'ᶮ':'n','ᶯ':'n','ᶰ':'n','ᶱ':'o','ᶲ':'o','ᶳ':'s','ᶴ':'s',
+  'ᶵ':'u','ᶶ':'u','ᶷ':'v','ᶸ':'v','ᶹ':'v','ᶺ':'w','ᶻ':'z',
+  'ᶼ':'z','ᶽ':'z','ᶾ':'z',
+  // ── Superscript / Subscript digits ──
+  '⁰':'0','¹':'1','²':'2','³':'3','⁴':'4','⁵':'5','⁶':'6','⁷':'7','⁸':'8','⁹':'9',
+  '₀':'0','₁':'1','₂':'2','₃':'3','₄':'4','₅':'5','₆':'6','₇':'7','₈':'8','₉':'9',
+  // ── Currency → Latin ──
+  '¥':'y','€':'e','$':'s','₹':'r','£':'l','¢':'c',
+  '₦':'n','₲':'g','₱':'p','₩':'w','₭':'k','₮':'t',
+  // ── Cherokee (used decoratively in BGMI/FreeFire names) ──
+  'Ꭰ':'d','Ꭱ':'e','Ꭲ':'i','Ꭳ':'o','Ꭴ':'u','Ꭵ':'v','Ꭶ':'g','Ꭷ':'o',
+  'Ꭸ':'h','Ꭹ':'y','Ꭺ':'a','Ꭻ':'j','Ꭼ':'e','Ꭽ':'a','Ꭾ':'p','Ꭿ':'h',
+  'Ꮀ':'h','Ꮁ':'h','Ꮂ':'i','Ꮃ':'l','Ꮄ':'d','Ꮅ':'l','Ꮆ':'m','Ꮇ':'m',
+  'Ꮈ':'n','Ꮉ':'n','Ꮊ':'h','Ꮋ':'h','Ꮌ':'w','Ꮍ':'w','Ꮎ':'n','Ꮏ':'n',
+  'Ꮐ':'g','Ꮑ':'n','Ꮒ':'h','Ꮓ':'z','Ꮔ':'h','Ꮕ':'l','Ꮖ':'t','Ꮗ':'w',
+  'Ꮘ':'q','Ꮙ':'v','Ꮚ':'v','Ꮛ':'e','Ꮜ':'s','Ꮝ':'s','Ꮞ':'s','Ꮟ':'s',
+  'Ꮠ':'d','Ꮡ':'d','Ꮢ':'r','Ꮣ':'d','Ꮤ':'t','Ꮥ':'t','Ꮦ':'d','Ꮧ':'i',
+  'Ꮨ':'i','Ꮩ':'o','Ꮪ':'o','Ꮫ':'o','Ꮬ':'u','Ꮭ':'u','Ꮮ':'l','Ꮯ':'l',
+  'Ꮰ':'a','Ꮱ':'a','Ꮲ':'a','Ꮳ':'k','Ꮴ':'k','Ꮵ':'g','Ꮶ':'g','Ꮷ':'g',
+  'Ꮸ':'b','Ꮹ':'b','Ꮺ':'b','Ꮻ':'l','Ꮼ':'l','Ꮽ':'m','Ꮾ':'m','Ꮿ':'y',
+  'Ᏸ':'y','Ᏹ':'y','Ᏺ':'w','Ᏻ':'w','Ᏼ':'b',
+  // ── Greek letters used as Latin ──
+  'Α':'a','Β':'b','Γ':'g','Δ':'a','Ε':'e','Ζ':'z','Η':'h','Θ':'o',
+  'Ι':'i','Κ':'k','Λ':'a','Μ':'m','Ν':'n','Ξ':'x','Ο':'o','Π':'p',
+  'Ρ':'r','Σ':'e','Τ':'t','Υ':'y','Φ':'f','Χ':'x','Ψ':'ps','Ω':'o',
+  'α':'a','β':'b','γ':'g','δ':'a','ε':'e','ζ':'z','η':'h','θ':'o',
+  'ι':'i','κ':'k','λ':'a','μ':'m','ν':'n','ξ':'x','ο':'o','π':'p',
+  'ρ':'r','σ':'e','ς':'s','τ':'t','υ':'y','φ':'f','χ':'x','ψ':'ps','ω':'o',
+  // ── Cyrillic that look like Latin ──
+  'А':'a','В':'b','С':'c','Е':'e','Н':'h','К':'k','М':'m',
+  'О':'o','Р':'p','Т':'t','У':'y','Х':'x','а':'a','в':'b','с':'c',
+  'е':'e','н':'h','к':'k','м':'m','о':'o','р':'p','т':'t','у':'y','х':'x',
+  // ── Tai Tham / Tai Le / Batak / other SE Asian (decorative) ──
+  'ᥫ':'','᭡':'','ꫝ':'h','ꪜ':'j','ᮘ':'a','ᥲ':'a','ᥱ':'a','ᥳ':'i',
+  // ── Arabic-Indic / Lao digits ──
+  '٠':'0','١':'1','٢':'2','٣':'3','٤':'4','٥':'5','٦':'6','٧':'7','٨':'8','٩':'9',
+  '໐':'0','໑':'1','໒':'2','໓':'3','໔':'4','໕':'5','໖':'6','໗':'7','໘':'8','໙':'9',
+  // ── Number forms ──
+  '½':'','⅓':'','⅔':'','¼':'','¾':'','Ⅼ':'l','Ⅷ':'viii','Ⅵ':'vi','ⅳ':'iv',
+  // ── Special single chars ──
+  '乂':'x','×':'x','Ï':'i','Ē':'e','Ë':'e','Ä':'a','Ö':'o','Ü':'u',
+  'Σ':'e','Λ':'a','κ':'k','Ψ':'ps','Ω':'w','Δ':'a','Φ':'f',
+  // ── Tifinagh / other exotic symbols ──
+  'ﾠ':'','❂':'','☂':'','☄':'','☃':'','♞':'','♤':'','✇':'','✿':'',
+  '⸙':'','⸻':'','⸼':'','‿':'','╰':'','╯':'','┊':'',
+  // ── Zigzag / decorative Latin Extended ──
+  'ẋ':'x','ꜱ':'s','ꜰ':'f','💲':'b',
+  // ── Hangul syllables commonly used as decoration ──
+  '모':'','ㄱ':'','ㄲ':'','ㄴ':'','ㄷ':'','ㄹ':'','ㅁ':'','ㅂ':'','ㅅ':'',
+  'ㅇ':'','ㅈ':'','ㅊ':'','ㅋ':'','ㅌ':'','ㅍ':'','ㅎ':'',
+};
+
+// Regex that strips entire decorative Unicode blocks (after individual mapping)
+// These blocks are commonly used in BGMI/FreeFire gaming names for decoration
+// ⚠️ Only BMP ranges (U+0000-U+FFFF) — supplementary plane ranges break JS regex
+//    without the 'u' flag (\u10300 parses as \u1030 + "0", matching ASCII 0-F!)
+//    Supplementary chars are handled by Step 6 (non-Latin strip) anyway.
+const DECORATIVE_BLOCK_REGEX = [
+  '[\u3164\u1160\u115F]',                    // Hangul filler / invisible
+  '[\u2800-\u28FF]',                           // Braille
+  '[\u1100-\u11FF]',                           // Hangul Jamo
+  '[\uA960-\uA97F]',                           // Hangul Jamo Extended-A
+  '[\uAC00-\uD7AF]',                           // Hangul Syllables
+  '[\u1950-\u197F]',                           // Tai Le (decorative vowels like ᥫ)
+  '[\u1A20-\u1AAF]',                           // Tai Tham
+  '[\u1B00-\u1B7F]',                           // Balinese (decorative like ᭡)
+  '[\u1B80-\u1BBF]',                           // Sundanese
+  '[\u1BC0-\u1BFF]',                           // Batak
+  '[\uAA00-\uAA5F]',                           // Cham
+  '[\uAA80-\uAADF]',                           // Tai Viet
+  '[\uA4D0-\uA4FF]',                           // Lisu
+  '[\uA900-\uA92F]',                           // Kayah Li
+  '[\uA930-\uA95F]',                           // Rejang
+  '[\uA980-\uA9DF]',                           // Javanese
+  '[\u18A0-\u18FF]',                           // Canadian Aboriginal (decorative)
+  '[\u2C00-\u2C5F]',                           // Glagolitic
+  '[\u2C80-\u2CFF]',                           // Coptic
+  '[\u2D80-\u2DDF]',                           // Ethiopic Extended
+  '[\u16A0-\u16FF]',                           // Runic (decorative)
+  '[\u1700-\u171F]',                           // Tagalog
+  '[\u1720-\u173F]',                           // Hanunoo
+  '[\u1740-\u175F]',                           // Buhid
+  '[\u1760-\u177F]',                           // Tagbanwa
+].join('|');
+
+// Hindi/Indic to Latin mapping (for Hindi gaming names)
+const HINDI_TO_LATIN: Record<string, string> = {
+  'अ':'a','आ':'aa','इ':'i','ई':'ee','उ':'u','ऊ':'oo','ऋ':'ri','ए':'e','ऐ':'ai',
+  'ओ':'o','औ':'au','अं':'an','अः':'ah','क':'k','ख':'kh','ग':'g','घ':'gh','ङ':'ng',
+  'च':'ch','छ':'chh','ज':'j','झ':'jh','ञ':'ny','ट':'t','ठ':'th','ड':'d','ढ':'dh',
+  'ण':'n','त':'t','थ':'th','द':'d','ध':'dh','न':'n','प':'p','फ':'f','ब':'b',
+  'भ':'bh','म':'m','य':'y','र':'r','ल':'l','व':'v','श':'sh','ष':'sh','स':'s','ह':'h',
+  'ळ':'l','क्ष':'ksh','ज्ञ':'gy','ॠ':'ri','ृ':'ri','ी':'i','ा':'a','ि':'i','ु':'u',
+  'ू':'u','े':'e','ो':'o','ौ':'au','ं':'n','ः':'h','्':'',
+  '०':'0','१':'1','२':'2','३':'3','४':'4','५':'5','६':'6','७':'7','८':'8','९':'9',
+  'ஜ':'j','க':'k','ர':'r','ன':'n','ள':'l',
+  'ನ':'n','ಟ':'t','ಭ':'bh','ಯ':'y','ಂ':'n','ಕ':'k','ರ':'r','ಜ':'j','ಳ':'l',
+};
+
+const normalizeStr = (s: string): string => {
+  // Step 1: NFKD decomposition (full-width Ａ→A, circled ⓐ→a, etc.)
+  let result = s.normalize('NFKD');
+
+  // Step 2: Map special Unicode → Latin via lookup (using Array.from for proper code point handling)
+  result = Array.from(result).map(ch => {
+    const mapped = SPECIAL_CHAR_MAP[ch];
+    return mapped !== undefined ? mapped : ch;
+  }).join('');
+
+  // Step 3: Strip combining diacritical marks (◌̈ ◌́ ◌̀ ◌̄ ◌̃ etc.)
+  result = result.replace(/[\u0300-\u036F]/g, '');
+
+  // Step 4: Strip invisible / zero-width / format characters
+  result = result.replace(/[\u200B-\u200D\uFEFF]/g, '');       // zero-width spaces
+  result = result.replace(/[\u2060-\u206F]/g, '');               // invisible format chars
+  result = result.replace(/[\u00AD\u034F]/g, '');                // soft hyphen, CGJ
+  result = result.replace(/[\u200E-\u200F]/g, '');               // LRM/RLM marks
+  result = result.replace(/[\u202A-\u202E]/g, '');               // embedding controls
+
+  // Step 5: Strip entire decorative Unicode blocks (Tai Le, Balinese, Hangul, etc.)
+  result = result.replace(new RegExp(DECORATIVE_BLOCK_REGEX, 'g'), '');
+
+  // Step 6: Strip all remaining non-Latin-non-digit characters
+  result = result.replace(/[^a-zA-Z0-9\u0900-\u097F\u0980-\u09FF\u0A80-\u0AFF\u0B00-\u0B7F]/g, '');
+
+  // Step 7: Devanagari/Hindi/Indic → Latin
+  result = result.replace(/[\u0900-\u097F\u0980-\u09FF\u0A80-\u0AFF\u0B00-\u0B7F]/g, (ch) => HINDI_TO_LATIN[ch] || '');
+
+  // Step 8: Collapse spaces, lowercase
+  result = result.replace(/\s+/g, '').toLowerCase();
+
+  return result;
+};
+
 export default function ResultsPage() {
   const { user } = useAuth();
   const logEndRef = useRef<HTMLDivElement>(null);
@@ -171,79 +337,82 @@ export default function ResultsPage() {
   const [showRevertBtn, setShowRevertBtn] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
 
-  // ── HIGH SENSITIVITY search — handles Unicode, decorative, styled names ──
-  // Normalizes: removes invisible chars, decomposes Unicode, strips decorators
-  const normalizeStr = (s: string): string => {
-    return s
-      .normalize('NFKD')                    // decompose ᴺ → N, ᴛ → t, ᴀ → a, etc.
-      .replace(/[\u200B-\u200D\uFEFF]/g, '') // zero-width spaces
-      .replace(/[\u2060-\u206F]/g, '')       // invisible format chars
-      .replace(/[\u00AD\u034F]/g, '')        // soft hyphen, combining grapheme joiner
-      .replace(/[ㅤᅠᅟ⠀⠀⣱⣲⣵]/g, '')      // Korean hangul filler, braille patterns
-      .replace(/[·•∗⁎★☆⭐※✦✧✩✪✫✬✭✮✯✰✱✲✳✴✵✶✷✸✹✺✻✼✽✾✿❀❁❂❃❄❅❆❇❈❉❊❋]/g, '')
-      .replace(/[\u25A0-\u25FF\u2600-\u27BF\u2B50-\u2B55]/g, '') // shapes, arrows
-      .replace(/[꧁꧂༺༻ψω∿♢♡♧♤♥♦♩♪♫♬♭♮♯]/g, '')  // decorative borders, symbols
-      .replace(/[᭄ꭄᭅꭅ⓿❶❷❸❹❺❻❼❽❾❿⓫⓬⓭⓮⓯⓰⓱⓲⓳⓴⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾]/g, '') // numeric circles
-      .replace(/[═╬║╔╗╚╝╠╣╦╩╬─│┌┐└┘├┤┬┴┼]/g, '') // box drawing
-      .replace(/[\uE000-\uF8FF]/g, '')       // private use area
-      .replace(/[\uFFF0-\uFFFF]/g, '')        // specials
-      .replace(/[☝✞✇$#@%&*+=~`'";:,.<>?!\^()\[\]{}|\\\/_\-]/g, '')
-      .replace(/\s+/g, '')                    // collapse all spaces
-      .toLowerCase();
-  };
-
   const filteredPlayers = (() => {
     if (!searchQuery.trim()) return players;
     const q = searchQuery.trim();
     const lowerQ = q.toLowerCase();
     const normQ = normalizeStr(q);
+    const basicQ = lowerQ.replace(/[^a-z0-9]/g, '');
+
+    // Multi-word support: "raja smart" → check each word individually + combined
+    const queryWords = q.trim().split(/\s+/).filter(w => w.length > 0);
+    const normWords = queryWords.map(w => normalizeStr(w));
+    const basicWords = queryWords.map(w => w.toLowerCase().replace(/[^a-z0-9]/g, ''));
 
     const scored = players.map(p => {
       const name = p.inGameName;
       const uid = String(p.inGameUID);
       const lowerName = name.toLowerCase();
       const normName = normalizeStr(name);
+      const basicName = name.replace(/[^A-Za-z0-9]/g, '').toLowerCase();
 
       let score = 0;
 
-      // UID exact/partial
+      // ── UID exact/partial ──
       if (uid === q) score = 1000;
       else if (uid.startsWith(q)) score = 950;
       else if (uid.includes(q)) score = 900;
 
-      // Name exact match
-      if (lowerName === lowerQ) score = Math.max(score, 850);
-      else if (name === q) score = Math.max(score, 860);
+      // ── Name exact match (raw) ──
+      if (name === q) score = Math.max(score, 860);
+      else if (lowerName === lowerQ) score = Math.max(score, 850);
 
-      // Name starts with
+      // ── Name starts with (raw) ──
       if (lowerName.startsWith(lowerQ)) score = Math.max(score, 750);
 
-      // Any word match in name (space separated)
-      if (name.split(/[\s_\-]+/).some(w => w.toLowerCase() === lowerQ)) score = Math.max(score, 700);
+      // ── Normalized exact / prefix / contains ──
+      if (normName === normQ) score = Math.max(score, 700);
+      else if (normName.startsWith(normQ)) score = Math.max(score, 650);
+      else if (normName.includes(normQ)) score = Math.max(score, 550);
 
-      // Normalized match (stripped all decorations)
-      if (normName === normQ) score = Math.max(score, 600);
-      else if (normName.startsWith(normQ)) score = Math.max(score, 550);
-      else if (normName.includes(normQ)) score = Math.max(score, 450);
+      // ── Basic stripped match ──
+      if (basicName === basicQ) score = Math.max(score, 500);
+      else if (basicName.startsWith(basicQ)) score = Math.max(score, 450);
+      else if (basicName.includes(basicQ)) score = Math.max(score, 380);
 
-      // Basic stripped match (only letters + digits)
-      const basicName = name.replace(/[^A-Za-z0-9]/g, '').toLowerCase();
-      const basicQ = lowerQ.replace(/[^a-z0-9]/g, '');
-      if (basicName === basicQ) score = Math.max(score, 400);
-      else if (basicName.startsWith(basicQ)) score = Math.max(score, 350);
-      else if (basicName.includes(basicQ)) score = Math.max(score, 280);
+      // ── Word-level: each query word matches independently ──
+      if (queryWords.length > 1) {
+        const allMatch = queryWords.every(w => {
+          const lw = w.toLowerCase();
+          const nw = normalizeStr(w);
+          return lowerName.includes(lw) || normName.includes(nw);
+        });
+        if (allMatch) score = Math.max(score, 600);
+      }
 
-      // Character-level fuzzy: check if query chars appear in order within normalized name
+      // ── Any word in name matches full query ──
+      if (normName.split(/\d+/).some(w => w === normQ)) score = Math.max(score, 520);
+
+      // ── Character-level subsequence fuzzy (ordered chars in normalized name) ──
       if (score === 0 && normQ.length >= 2) {
         let qi = 0;
         for (let ni = 0; ni < normName.length && qi < normQ.length; ni++) {
           if (normName[ni] === normQ[qi]) qi++;
         }
-        if (qi === normQ.length) score = Math.max(score, 150);
+        if (qi === normQ.length) score = Math.max(score, 200);
       }
 
-      // Partial: if name contains query as substring in any form
-      if (score === 0 && lowerName.includes(lowerQ)) score = Math.max(score, 200);
+      // ── Subsequence fuzzy on basic (raw letters only) ──
+      if (score === 0 && basicQ.length >= 2) {
+        let qi = 0;
+        for (let ni = 0; ni < basicName.length && qi < basicQ.length; ni++) {
+          if (basicName[ni] === basicQ[qi]) qi++;
+        }
+        if (qi === basicQ.length) score = Math.max(score, 160);
+      }
+
+      // ── Raw partial fallback ──
+      if (score === 0 && lowerName.includes(lowerQ)) score = Math.max(score, 120);
 
       return { player: p, score };
     }).filter(s => s.score > 0).sort((a, b) => b.score - a.score);
@@ -630,10 +799,22 @@ export default function ResultsPage() {
   // ═══════════════════════════════════════════════
   // SAVE ALL — save all pending players at once
   // ═══════════════════════════════════════════════
+  const hasAnyResultField = (p: PlayerData): boolean => {
+    return (
+      p.kills > 0 ||
+      p.deaths > 0 ||
+      p.assists > 0 ||
+      p.damage > 0 ||
+      p.coinsEarned > 0 ||
+      p.rank > 0 ||
+      (p.result && p.result !== '' && p.result !== 'lose')
+    );
+  };
+
   const handleSaveAll = async () => {
     setShowSaveAllDialog(false);
     setSavingAll(true);
-    const pending = players.filter(p => !p.isSaved);
+    const pending = players.filter(p => !p.isSaved && hasAnyResultField(p));
     let saved = 0;
     for (const player of pending) {
       try {
