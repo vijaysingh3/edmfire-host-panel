@@ -23,7 +23,6 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import {
   collection,
-  query,
   getDocs,
   doc,
   onSnapshot as docOnSnapshot,
@@ -220,6 +219,15 @@ export default function WalletPage() {
   const [loading, setLoading] = useState(true);
   const [selectedTxn, setSelectedTxn] = useState<TransactionItem | null>(null);
 
+  // ── Aggregated stats from transactionRecord (saves read quota) ──
+  const [recordStats, setRecordStats] = useState({
+    totalDeposit: 0,
+    entryFee: 0,
+    totalPrizeDistribution: 0,
+    totalRefunded: 0,
+    withdrawnAmount: 0,
+  });
+
   // ── Fetch All Transactions (no pagination) ──
   useEffect(() => {
     if (authLoading || !user) return;
@@ -266,6 +274,29 @@ export default function WalletPage() {
       .finally(() => setLoading(false));
   }, [user, authLoading]);
 
+  // ── Fetch Aggregated Stats from transactionRecord (5 docs only, no iteration) ──
+  useEffect(() => {
+    if (authLoading || !user) return;
+    const recordRef = collection(db, 'hosts', user.uid, 'transactionRecord');
+    getDocs(recordRef)
+      .then((snap) => {
+        const data: Record<string, number> = {};
+        snap.forEach((d) => {
+          const field = d.id;
+          const val = d.data()?.amounts || 0;
+          data[field] = val;
+        });
+        setRecordStats({
+          totalDeposit: data.totalDeposit || 0,
+          entryFee: data.entryFee || 0,
+          totalPrizeDistribution: data.totalPrizeDistribution || 0,
+          totalRefunded: data.totalRefunded || 0,
+          withdrawnAmount: data.withdrawnAmount || 0,
+        });
+      })
+      .catch((e) => console.error('transactionRecord fetch error:', e));
+  }, [user, authLoading]);
+
   // ── Realtime Wallet Balance ──
   useEffect(() => {
     if (authLoading || !user) return;
@@ -287,20 +318,14 @@ export default function WalletPage() {
     });
   }, [allTransactions, activeTab]);
 
-  // ── Stats ──
-  const stats = useMemo(() => {
-    let totalDeposit = 0, totalEntry = 0, totalPrize = 0, totalRefund = 0, totalWithdrawal = 0;
-    allTransactions.forEach((t) => {
-      const amt = t.amount || 0;
-      const cat = getTransactionCategory(t._raw || {});
-      if (cat === 'deposit') totalDeposit += amt;
-      else if (cat === 'entry_fee') totalEntry += amt;
-      else if (cat === 'prize') totalPrize += amt;
-      else if (cat === 'refund') totalRefund += amt;
-      else if (cat === 'withdrawal') totalWithdrawal += amt;
-    });
-    return { totalDeposit, totalEntry, totalPrize, totalRefund, totalWithdrawal };
-  }, [allTransactions]);
+  // ── Stats (from transactionRecord — no iteration needed) ──
+  const stats = useMemo(() => ({
+    totalDeposit: recordStats.totalDeposit,
+    totalEntry: recordStats.entryFee,
+    totalPrize: recordStats.totalPrizeDistribution,
+    totalRefund: recordStats.totalRefunded,
+    totalWithdrawal: recordStats.withdrawnAmount,
+  }), [recordStats]);
 
   // ═══════════════════════════════════════════════════
   // DETAIL VIEW
