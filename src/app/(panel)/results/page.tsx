@@ -59,6 +59,7 @@ interface PlayerData {
   rank: number;
   result: string;       // win / lose / top10 / dq
   isManuallyEdited: boolean;
+  isSaved: boolean;       // PaymentStatus already true in RTDB
 }
 
 // ═══════════════════════════════════════════════════
@@ -128,6 +129,7 @@ function parsePlayerData(playerObj: any, playerKey: string, currentType: string,
     rank: safeInt(playerObj, 'Rank'),
     result: '',
     isManuallyEdited: false,
+    isSaved: false,
   };
 }
 
@@ -137,6 +139,8 @@ export default function ResultsPage() {
   const deleteConfirmRef = useRef<HTMLInputElement>(null);
   const [deleteTarget, setDeleteTarget] = useState<PlayerData | null>(null);
   const [deleteUidInput, setDeleteUidInput] = useState('');
+  const [showSaveAllDialog, setShowSaveAllDialog] = useState(false);
+  const [savingAll, setSavingAll] = useState(false);
 
   // ── Config state ──
   const [configReady, setConfigReady] = useState(false);
@@ -165,6 +169,7 @@ export default function ResultsPage() {
   // ── Players data ──
   const [players, setPlayers] = useState<PlayerData[]>([]);
   const [showRevertBtn, setShowRevertBtn] = useState(false);
+  const [pendingCount, setPendingCount] = useState(0);
 
   // ── HIGH SENSITIVITY search — handles Unicode, decorative, styled names ──
   // Normalizes: removes invisible chars, decomposes Unicode, strips decorators
@@ -418,9 +423,7 @@ export default function ResultsPage() {
   };
 
   // ═══════════════════════════════════════════════
-  // FETCH PLAYERS — Kotlin fetchPlayersData()
-  // RTDB: Tournaments/TournamentDetails/{type}/{id}/JoinedPlayers
-  // Only players where PaymentStatus !== true
+  // FETCH PLAYERS — Load ALL players (saved + pending)
   // ═══════════════════════════════════════════════
   const fetchPlayersData = async () => {
     const id = tournamentId.trim();
@@ -428,47 +431,43 @@ export default function ResultsPage() {
     try {
       const data = await rtdbGet(getJoinedPlayersPath(tournamentType, id));
       const parsedPlayers: PlayerData[] = [];
+      let pending = 0;
 
       if (data && data !== null && typeof data === 'object') {
-        // Check if array format
-        if (Array.isArray(data)) {
-          data.forEach((playerObj: any, index: number) => {
-            if (playerObj && typeof playerObj === 'object') {
-              const paymentStatus = playerObj.PaymentStatus === true;
-              if (!paymentStatus) {
-                parsedPlayers.push(parsePlayerData(playerObj, String(index), tournamentType, id));
-              }
+        const parse = (playerObj: any, key: string) => {
+          if (playerObj && typeof playerObj === 'object') {
+            const p = parsePlayerData(playerObj, key, tournamentType, id);
+            const isSaved = playerObj.PaymentStatus === true;
+            p.isSaved = isSaved;
+            if (isSaved) {
+              p.result = safeStr(playerObj, 'Result');
             }
-          });
-        } else {
-          // Object format
-          for (const [key, value] of Object.entries(data)) {
-            const playerObj = value as any;
-            if (playerObj && typeof playerObj === 'object') {
-              const paymentStatus = playerObj.PaymentStatus === true;
-              if (!paymentStatus) {
-                parsedPlayers.push(parsePlayerData(playerObj, key, tournamentType, id));
-              }
-            }
+            if (!isSaved) pending++;
+            parsedPlayers.push(p);
           }
+        };
+        if (Array.isArray(data)) {
+          data.forEach((playerObj: any, index: number) => parse(playerObj, String(index)));
+        } else {
+          for (const [key, value] of Object.entries(data)) parse(value as any, key);
         }
       }
 
-      // Auto-calc coins if PerKill > 0
+      // Auto-calc coins if PerKill > 0 (only for pending players)
       if (isAutoCalcEnabled) {
         parsedPlayers.forEach(p => {
-          if (!p.isManuallyEdited) {
+          if (!p.isManuallyEdited && !p.isSaved) {
             p.coinsEarned = p.kills * currentPerKillPaisa;
           }
         });
       }
 
+      // Sort: pending first, then saved
+      parsedPlayers.sort((a, b) => (a.isSaved === b.isSaved ? 0 : a.isSaved ? 1 : -1));
+
       setPlayers(parsedPlayers);
-      if (parsedPlayers.length === 0) {
-        toast.info('No pending players found');
-      } else {
-        toast.success(`Loaded ${parsedPlayers.length} players`);
-      }
+      setPendingCount(pending);
+      toast.success(`Loaded ${parsedPlayers.length} players (${pending} pending)`);
       checkAndUpdateRevertButton();
     } catch (e: any) {
       toast.error(`Failed to fetch players: ${e.message}`);
@@ -613,8 +612,11 @@ export default function ResultsPage() {
       if (success) {
         // Update WinnerList
         await updateWinnerList(player);
-        fetchPlayersData();
-        toast.success(`${player.inGameName} updated!`);
+        // Mark as saved locally without full reload
+        setPlayers(prev => prev.map(p => p.playerKey === player.playerKey ? { ...p, isSaved: true } : p));
+        setPendingCount(prev => Math.max(0, prev - 1));
+        checkAndUpdateRevertButton();
+        toast.success(`${player.inGameName} saved!`);
       } else {
         toast.error('Failed to update player');
       }
@@ -623,6 +625,37 @@ export default function ResultsPage() {
     } finally {
       setUpdatingPlayer(null);
     }
+  };
+
+  // ═══════════════════════════════════════════════
+  // SAVE ALL — save all pending players at once
+  // ═══════════════════════════════════════════════
+  const handleSaveAll = async () => {
+    setShowSaveAllDialog(false);
+    setSavingAll(true);
+    const pending = players.filter(p => !p.isSaved);
+    let saved = 0;
+    for (const player of pending) {
+      try {
+        if (isAutoCalcEnabled && !player.isManuallyEdited) {
+          player.coinsEarned = player.kills * currentPerKillPaisa;
+        }
+        const pd = {
+          InGameName: player.inGameName, InGameLevel: player.inGameLevel,
+          InGameUID: player.inGameUID, PositionSeat: player.positionSeat,
+          userId: player.userId, JoinTime: player.joinTime,
+          Kills: player.kills, Deaths: player.deaths, Assists: player.assists,
+          Damage: player.damage, CoinsEarned: player.coinsEarned,
+          Rank: player.rank, Result: player.result, PaymentStatus: true,
+        };
+        const fp = `${getJoinedPlayersPath(tournamentType, tournamentId.trim())}/${player.playerKey}`;
+        const ok = await rtdbPatch(fp, pd);
+        if (ok) { await updateWinnerList(player); saved++; }
+      } catch { /* skip */ }
+    }
+    setSavingAll(false);
+    toast.success(`Saved ${saved}/${pending.length} players`);
+    fetchPlayersData();
   };
 
   // ═══════════════════════════════════════════════
@@ -889,9 +922,19 @@ export default function ResultsPage() {
           {searchQuery && <button onClick={() => setSearchQuery('')}><X className="w-3.5 h-3.5 text-red-400" /></button>}
         </div>
 
-        <p className="text-xs font-bold text-yellow-400">
-          Players: {searchQuery ? `${filteredPlayers.length} / ${players.length} (filtered)` : players.length}
-        </p>
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-bold text-yellow-400">
+            Players: {players.length} {pendingCount > 0 ? <span className="text-fuchsia-400">({pendingCount} pending)</span> : <span className="text-green-400">(all saved)</span>}
+            {searchQuery && <span className="text-[oklch(0.45,0.04,290)]"> · {filteredPlayers.length} shown</span>}
+          </p>
+          {pendingCount > 0 && (
+            <button onClick={() => setShowSaveAllDialog(true)} disabled={loading || savingAll}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-gradient-to-r from-fuchsia-500 to-violet-600 text-white font-semibold text-[10px] shadow-lg shadow-fuchsia-500/20 active:scale-95 transition-transform disabled:opacity-40">
+              {savingAll ? <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Save className="w-3 h-3" />}
+              Save All
+            </button>
+          )}
+        </div>
 
         {/* Player Table */}
         <div className="space-y-1.5">
@@ -905,7 +948,7 @@ export default function ResultsPage() {
           ) : (
             <div className="overflow-x-auto -mx-1 px-1">
               {/* Table Header */}
-              <div className={`grid gap-0.5 ${tournamentMode === 'BattleRoyal' ? 'grid-cols-[minmax(90px,1.2fr)_36px_38px_48px_38px_44px_68px] min-w-[400px]' : 'grid-cols-[minmax(90px,1.2fr)_36px_38px_38px_38px_42px_48px_38px_44px_68px] min-w-[520px]'}`}>
+              <div className={`grid gap-0.5 ${tournamentMode === 'BattleRoyal' ? 'grid-cols-[minmax(90px,1.2fr)_36px_50px_60px_50px_44px_68px] min-w-[450px]' : 'grid-cols-[minmax(90px,1.2fr)_36px_50px_38px_38px_42px_60px_50px_44px_68px] min-w-[580px]'}`}>
                 {tournamentMode === 'BattleRoyal'
                   ? ['Name', '#', 'K', 'Coins', 'Rank', 'Result', 'Action'].map((h) => (
                       <div key={h} className="text-[8px] font-bold text-[oklch(0.40,0.04,290)] text-center py-1 px-0.5 uppercase tracking-wider">{h}</div>
@@ -917,49 +960,63 @@ export default function ResultsPage() {
               </div>
               {/* Table Rows */}
               {filteredPlayers.map((player) => (
-                <div key={player.playerKey} className={`grid gap-0.5 items-center bg-[oklch(0.16,0.04,290)] border border-[oklch(0.25,0.05,290)] rounded-lg px-0.5 py-1 hover:border-fuchsia-500/30 transition-colors ${tournamentMode === 'BattleRoyal' ? 'grid-cols-[minmax(90px,1.2fr)_36px_38px_48px_38px_44px_68px] min-w-[400px]' : 'grid-cols-[minmax(90px,1.2fr)_36px_38px_38px_38px_42px_48px_38px_44px_68px] min-w-[520px]'}`}>
+                <div key={player.playerKey} className={`grid gap-0.5 items-center border rounded-lg px-0.5 py-1 hover:border-fuchsia-500/30 transition-colors ${player.isSaved ? 'bg-green-500/5 border-green-500/20' : 'bg-[oklch(0.16,0.04,290)] border-[oklch(0.25,0.05,290)]'} ${tournamentMode === 'BattleRoyal' ? 'grid-cols-[minmax(90px,1.2fr)_36px_50px_60px_50px_44px_68px] min-w-[450px]' : 'grid-cols-[minmax(90px,1.2fr)_36px_50px_38px_38px_42px_60px_50px_44px_68px] min-w-[580px]'}`}>
                   {/* Name + Level */}
                   <div className="min-w-0 flex flex-col px-1">
-                    <span className="text-[10px] font-bold text-white truncate leading-tight">{player.inGameName}</span>
+                    <div className="flex items-center gap-1">
+                      {player.isSaved && <span className="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0"></span>}
+                      <span className={`text-[10px] font-bold truncate leading-tight ${player.isSaved ? 'text-green-300/60' : 'text-white'}`}>{player.inGameName}</span>
+                    </div>
                     <span className="text-[8px] text-[oklch(0.45,0.04,290)] font-mono leading-tight">{player.inGameUID} · Lv{player.inGameLevel}</span>
                   </div>
                   {/* Slot */}
                   <div className="text-[10px] font-bold text-fuchsia-400 text-center">{player.positionSeat}</div>
-                  {/* Kills */}
-                  <input type="number" value={player.kills}
-                    onChange={(e) => updatePlayerField(player.playerKey, 'kills', Number(e.target.value))}
-                    className="w-full bg-[oklch(0.20,0.04,290)] text-[10px] font-bold text-white text-center rounded py-0.5 outline-none focus:ring-1 focus:ring-fuchsia-500/40" />
+                  {/* Kills + +/- */}
+                  <div className="flex items-center gap-px">
+                    <button onClick={() => updatePlayerField(player.playerKey, 'kills', player.kills - 1)} className="w-4 h-5 flex items-center justify-center rounded-l bg-[oklch(0.20,0.04,290)] text-[9px] text-red-400/70 hover:bg-red-500/20 active:bg-red-500/30 select-none">−</button>
+                    <input type="number" value={player.kills}
+                      onChange={(e) => updatePlayerField(player.playerKey, 'kills', Number(e.target.value))}
+                      className="w-full bg-[oklch(0.20,0.04,290)] text-[10px] font-bold text-white text-center py-0.5 outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+                    <button onClick={() => updatePlayerField(player.playerKey, 'kills', player.kills + 1)} className="w-4 h-5 flex items-center justify-center rounded-r bg-[oklch(0.20,0.04,290)] text-[9px] text-green-400/70 hover:bg-green-500/20 active:bg-green-500/30 select-none">+</button>
+                  </div>
                   {/* Deaths — hidden in BattleRoyal */}
                   {tournamentMode !== 'BattleRoyal' && (
                     <input type="number" value={player.deaths}
                       onChange={(e) => updatePlayerField(player.playerKey, 'deaths', Number(e.target.value))}
-                      className="w-full bg-[oklch(0.20,0.04,290)] text-[10px] font-bold text-teal-400 text-center rounded py-0.5 outline-none focus:ring-1 focus:ring-fuchsia-500/40" />
+                      className="w-full bg-[oklch(0.20,0.04,290)] text-[10px] font-bold text-teal-400 text-center rounded py-0.5 outline-none focus:ring-1 focus:ring-fuchsia-500/40 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
                   )}
                   {/* Assists — hidden in BattleRoyal */}
                   {tournamentMode !== 'BattleRoyal' && (
                     <input type="number" value={player.assists}
                       onChange={(e) => updatePlayerField(player.playerKey, 'assists', Number(e.target.value))}
-                      className="w-full bg-[oklch(0.20,0.04,290)] text-[10px] font-bold text-white text-center rounded py-0.5 outline-none focus:ring-1 focus:ring-fuchsia-500/40" />
+                      className="w-full bg-[oklch(0.20,0.04,290)] text-[10px] font-bold text-white text-center rounded py-0.5 outline-none focus:ring-1 focus:ring-fuchsia-500/40 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
                   )}
                   {/* Damage — hidden in BattleRoyal */}
                   {tournamentMode !== 'BattleRoyal' && (
                     <input type="number" value={player.damage}
                       onChange={(e) => updatePlayerField(player.playerKey, 'damage', Number(e.target.value))}
-                      className="w-full bg-[oklch(0.20,0.04,290)] text-[10px] font-bold text-red-400 text-center rounded py-0.5 outline-none focus:ring-1 focus:ring-fuchsia-500/40" />
+                      className="w-full bg-[oklch(0.20,0.04,290)] text-[10px] font-bold text-red-400 text-center rounded py-0.5 outline-none focus:ring-1 focus:ring-fuchsia-500/40 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
                   )}
-                  {/* Coins */}
-                  <div className="relative">
+                  {/* Coins + +/- */}
+                  <div className="flex items-center gap-px">
+                    <button onClick={() => updatePlayerField(player.playerKey, 'coinsEarned', Math.max(0, player.coinsEarned - 100))}
+                      className="w-4 h-5 flex items-center justify-center rounded-l bg-[oklch(0.20,0.04,290)] text-[9px] text-red-400/70 hover:bg-red-500/20 active:bg-red-500/30 select-none">−</button>
                     <input type="number" value={Math.round(paisaToRupees(player.coinsEarned))}
                       onChange={(e) => updatePlayerField(player.playerKey, 'coinsEarned', rupeesToPaisa(Number(e.target.value)))}
-                      className="w-full bg-[oklch(0.20,0.04,290)] text-[10px] font-bold text-yellow-400 text-center rounded py-0.5 outline-none focus:ring-1 focus:ring-yellow-500/40 pr-3" />
-                    {isAutoCalcEnabled && !player.isManuallyEdited && (
-                      <span className="absolute right-0.5 top-1/2 -translate-y-1/2 text-[6px] text-[oklch(0.35,0.04,290)]">A</span>
-                    )}
+                      className="w-full bg-[oklch(0.20,0.04,290)] text-[10px] font-bold text-yellow-400 text-center py-0.5 outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+                    <button onClick={() => updatePlayerField(player.playerKey, 'coinsEarned', player.coinsEarned + 100)}
+                      className="w-4 h-5 flex items-center justify-center rounded-r bg-[oklch(0.20,0.04,290)] text-[9px] text-green-400/70 hover:bg-green-500/20 active:bg-green-500/30 select-none">+</button>
                   </div>
-                  {/* Rank */}
-                  <input type="number" value={player.rank}
-                    onChange={(e) => updatePlayerField(player.playerKey, 'rank', Number(e.target.value))}
-                    className="w-full bg-[oklch(0.20,0.04,290)] text-[10px] font-bold text-white text-center rounded py-0.5 outline-none focus:ring-1 focus:ring-fuchsia-500/40" />
+                  {/* Rank + +/- */}
+                  <div className="flex items-center gap-px">
+                    <button onClick={() => updatePlayerField(player.playerKey, 'rank', Math.max(0, player.rank - 1))}
+                      className="w-4 h-5 flex items-center justify-center rounded-l bg-[oklch(0.20,0.04,290)] text-[9px] text-red-400/70 hover:bg-red-500/20 active:bg-red-500/30 select-none">−</button>
+                    <input type="number" value={player.rank}
+                      onChange={(e) => updatePlayerField(player.playerKey, 'rank', Number(e.target.value))}
+                      className="w-full bg-[oklch(0.20,0.04,290)] text-[10px] font-bold text-white text-center py-0.5 outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+                    <button onClick={() => updatePlayerField(player.playerKey, 'rank', player.rank + 1)}
+                      className="w-4 h-5 flex items-center justify-center rounded-r bg-[oklch(0.20,0.04,290)] text-[9px] text-green-400/70 hover:bg-green-500/20 active:bg-green-500/30 select-none">+</button>
+                  </div>
                   {/* Result Badge (auto) */}
                   <div className="text-center px-0.5">
                     <span className={`inline-block text-[8px] font-bold px-1.5 py-0.5 rounded-full leading-none ${
@@ -998,6 +1055,29 @@ export default function ResultsPage() {
           )}
         </div>
       </div>
+
+      {/* Save All Confirmation Dialog */}
+      {showSaveAllDialog && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-[oklch(0.18,0.04,290)] border border-[oklch(0.30,0.06,290)] rounded-2xl p-5 max-w-xs w-full space-y-4">
+            <div className="text-center">
+              <p className="text-sm font-bold text-fuchsia-400">Save All Players</p>
+              <p className="text-[11px] text-[oklch(0.60,0.04,290)] mt-2 leading-relaxed">Make sure all info is correct.<br />ReCheck if not.</p>
+              <p className="text-[10px] text-yellow-400 mt-1.5 font-mono">{pendingCount} players will be saved</p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button onClick={() => setShowSaveAllDialog(false)}
+                className="py-2.5 rounded-xl bg-[oklch(0.22,0.04,290)] border border-[oklch(0.30,0.06,290)] text-[oklch(0.60,0.04,290)] text-xs font-semibold">
+                NO
+              </button>
+              <button onClick={handleSaveAll}
+                className="py-2.5 rounded-xl bg-gradient-to-r from-fuchsia-500 to-violet-600 text-white text-xs font-bold shadow-lg shadow-fuchsia-500/20">
+                YES
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Delete Confirmation Dialog */}
       {deleteTarget && (
