@@ -609,15 +609,29 @@ export default function ResultsPage() {
       let pending = 0;
 
       if (data && data !== null && typeof data === 'object') {
+        // Fetch WinnerList to check which players are in it (for green highlight)
+        let winnerUserIds = new Set<string>();
+        try {
+          const wlData = await rtdbGet(getWinnerListPath(tournamentType, id));
+          if (wlData && typeof wlData === 'object') {
+            const extractIds = (obj: any) => {
+              if (obj && typeof obj === 'object' && obj.userId) winnerUserIds.add(String(obj.userId));
+            };
+            if (Array.isArray(wlData)) wlData.forEach(extractIds);
+            else Object.values(wlData).forEach(extractIds);
+          }
+        } catch { /* ignore */ }
+
         const parse = (playerObj: any, key: string) => {
           if (playerObj && typeof playerObj === 'object') {
             const p = parsePlayerData(playerObj, key, tournamentType, id);
-            const isSaved = playerObj.PaymentStatus === true;
-            p.isSaved = isSaved;
-            if (isSaved) {
+            const paymentDone = playerObj.PaymentStatus === true;
+            const inWinnerList = winnerUserIds.has(String(p.userId));
+            p.isSaved = paymentDone && inWinnerList;  // Green only if in WinnerList
+            if (paymentDone) {
               p.result = safeStr(playerObj, 'Result');
             }
-            if (!isSaved) pending++;
+            if (!paymentDone) pending++;
             parsedPlayers.push(p);
           }
         };
@@ -823,8 +837,25 @@ export default function ResultsPage() {
   const handleSaveAll = async () => {
     setShowSaveAllDialog(false);
     setSavingAll(true);
-    const pending = players.filter(p => !p.isSaved && hasAnyResultField(p));
+    const id = tournamentId.trim();
+    const isCSorLW = tournamentMode === 'ClashSquad' || tournamentMode === 'LoneWolf';
+
+    // For ClashSquad/LoneWolf: pending = manually edited winners, unchanged = auto LOSS
+    let pending: PlayerData[];
+    let autoLoss: PlayerData[] = [];
+
+    if (isCSorLW) {
+      const edited = players.filter(p => !p.isSaved && p.isManuallyEdited);
+      autoLoss = players.filter(p => !p.isSaved && !p.isManuallyEdited);
+      pending = edited;
+    } else {
+      pending = players.filter(p => !p.isSaved && hasAnyResultField(p));
+    }
+
     let saved = 0;
+    let lossSaved = 0;
+
+    // Save winners / edited players
     for (const player of pending) {
       try {
         if (isAutoCalcEnabled && !player.isManuallyEdited) {
@@ -838,13 +869,38 @@ export default function ResultsPage() {
           Damage: player.damage, CoinsEarned: player.coinsEarned,
           Rank: player.rank, Result: player.result, PaymentStatus: true,
         };
-        const fp = `${getJoinedPlayersPath(tournamentType, tournamentId.trim())}/${player.playerKey}`;
+        const fp = `${getJoinedPlayersPath(tournamentType, id)}/${player.playerKey}`;
         const ok = await rtdbPatch(fp, pd);
         if (ok) { await updateWinnerList(player); saved++; }
       } catch { /* skip */ }
     }
+
+    // Auto LOSS for unchanged players (ClashSquad/LoneWolf only)
+    for (const player of autoLoss) {
+      try {
+        player.result = 'lose';
+        player.coinsEarned = 0;
+        const pd = {
+          InGameName: player.inGameName, InGameLevel: player.inGameLevel,
+          InGameUID: player.inGameUID, PositionSeat: player.positionSeat,
+          userId: player.userId, JoinTime: player.joinTime,
+          Kills: player.kills, Deaths: player.deaths, Assists: player.assists,
+          Damage: player.damage, CoinsEarned: 0,
+          Rank: 0, Result: 'lose', PaymentStatus: true,
+        };
+        const fp = `${getJoinedPlayersPath(tournamentType, id)}/${player.playerKey}`;
+        const ok = await rtdbPatch(fp, pd);
+        if (ok) { await updateWinnerList(player); lossSaved++; }
+      } catch { /* skip */ }
+    }
+
     setSavingAll(false);
-    toast.success(`Saved ${saved}/${pending.length} players`);
+    const total = saved + lossSaved;
+    if (isCSorLW && lossSaved > 0) {
+      toast.success(`Saved ${saved} winners + ${lossSaved} auto-LOSS (${total} total)`);
+    } else {
+      toast.success(`Saved ${saved}/${pending.length} players`);
+    }
     fetchPlayersData();
   };
 
@@ -1163,7 +1219,7 @@ export default function ResultsPage() {
                   <div className="text-sm font-bold text-fuchsia-400 text-center">{player.positionSeat}</div>
                   {/* Kills + +/- */}
                   <div className="flex items-center gap-0.5">
-                    <button onClick={() => updatePlayerField(player.playerKey, 'kills', player.kills - 1)} className="w-5 h-7 flex items-center justify-center rounded-l bg-[oklch(0.20,0.04,290)] text-xs text-red-400/70 hover:bg-red-500/20 active:bg-red-500/30 select-none">−</button>
+                    <button onClick={() => updatePlayerField(player.playerKey, 'kills', player.kills - 1)} className="w-7 h-7 flex items-center justify-center rounded-l bg-[oklch(0.20,0.04,290)] text-sm text-red-400/70 hover:bg-red-500/20 active:bg-red-500/30 select-none">−</button>
                     <input type="number" value={player.kills}
                       onChange={(e) => updatePlayerField(player.playerKey, 'kills', Number(e.target.value))}
                       className="w-full bg-[oklch(0.20,0.04,290)] text-xs font-bold text-white text-center py-1 outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
@@ -1190,7 +1246,7 @@ export default function ResultsPage() {
                   {/* Coins + +/- */}
                   <div className="flex items-center gap-0.5">
                     <button onClick={() => updatePlayerField(player.playerKey, 'coinsEarned', Math.max(0, player.coinsEarned - 100))}
-                      className="w-5 h-7 flex items-center justify-center rounded-l bg-[oklch(0.20,0.04,290)] text-xs text-red-400/70 hover:bg-red-500/20 active:bg-red-500/30 select-none">−</button>
+                      className="w-7 h-7 flex items-center justify-center rounded-l bg-[oklch(0.20,0.04,290)] text-sm text-red-400/70 hover:bg-red-500/20 active:bg-red-500/30 select-none">−</button>
                     <input type="number" value={Math.round(paisaToRupees(player.coinsEarned))}
                       onChange={(e) => updatePlayerField(player.playerKey, 'coinsEarned', rupeesToPaisa(Number(e.target.value)))}
                       className="w-full bg-[oklch(0.20,0.04,290)] text-xs font-bold text-yellow-400 text-center py-1 outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
@@ -1200,7 +1256,7 @@ export default function ResultsPage() {
                   {/* Rank + +/- */}
                   <div className="flex items-center gap-0.5">
                     <button onClick={() => updatePlayerField(player.playerKey, 'rank', Math.max(0, player.rank - 1))}
-                      className="w-5 h-7 flex items-center justify-center rounded-l bg-[oklch(0.20,0.04,290)] text-xs text-red-400/70 hover:bg-red-500/20 active:bg-red-500/30 select-none">−</button>
+                      className="w-7 h-7 flex items-center justify-center rounded-l bg-[oklch(0.20,0.04,290)] text-sm text-red-400/70 hover:bg-red-500/20 active:bg-red-500/30 select-none">−</button>
                     <input type="number" value={player.rank}
                       onChange={(e) => updatePlayerField(player.playerKey, 'rank', Number(e.target.value))}
                       className="w-full bg-[oklch(0.20,0.04,290)] text-xs font-bold text-white text-center py-1 outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
