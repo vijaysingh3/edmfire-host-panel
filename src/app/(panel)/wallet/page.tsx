@@ -90,18 +90,14 @@ function formatCoins(paisa: number): string {
 
 function safeTimestamp(raw: Record<string, any>): string {
   if (!raw) return '';
-  // 1. New format: timestampIST field (human-readable IST string)
+  // 1. timestampIST field (human-readable IST string from backend)
   if (raw.timestampIST && typeof raw.timestampIST === 'string') return raw.timestampIST;
-  // 2. Old format: timestamp was {stringValue: "31 May 2026, 7:21 pm IST"}
-  if (raw.timestamp && typeof raw.timestamp === 'object' && 'stringValue' in raw.timestamp) {
-    return typeof raw.timestamp.stringValue === 'string' ? raw.timestamp.stringValue : String(raw.timestamp.stringValue);
-  }
-  // 3. Real Firestore Timestamp: {seconds, nanoseconds}
+  // 2. Real Firestore Timestamp: {seconds, nanoseconds}
   if (raw.timestamp && typeof raw.timestamp === 'object' && 'seconds' in raw.timestamp) {
     const d = new Date(raw.timestamp.seconds * 1000 + (raw.timestamp.nanoseconds || 0) / 1e6);
     return d.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true });
   }
-  // 4. Plain string
+  // 3. Fallback: plain string or legacy format
   if (typeof raw.timestamp === 'string') return raw.timestamp;
   return '';
 }
@@ -222,18 +218,16 @@ function parseCustomDateString(str: string): number {
 function getTimestampMs(raw: Record<string, any>): number {
   const ts = raw.timestamp;
   if (!ts) return 0;
-  // 1. Real Firestore Timestamp: {seconds, nanoseconds} — fastest path
+  // Real Firestore Timestamp: {seconds, nanoseconds}
   if (ts && typeof ts === 'object' && 'seconds' in ts) {
     return ts.seconds * 1000 + (ts.nanoseconds || 0) / 1e6;
   }
-  // 2. Old format: {stringValue: "31 May 2026, 7:21 pm IST"}
+  // Fallback for any legacy data
+  if (typeof ts === 'number') return ts;
+  if (typeof ts === 'string') return parseCustomDateString(ts);
   if (ts && typeof ts === 'object' && 'stringValue' in ts) {
     return parseCustomDateString(String(ts.stringValue));
   }
-  // 3. Plain number (epoch ms)
-  if (typeof ts === 'number') return ts;
-  // 4. Plain string
-  if (typeof ts === 'string') return parseCustomDateString(ts);
   return 0;
 }
 
@@ -271,7 +265,7 @@ export default function WalletPage() {
     totalDeposit: 0, entryFee: 0, totalPrizeDistribution: 0, totalRefunded: 0, withdrawnAmount: 0,
   });
 
-  // ── Fetch latest 50 transactions (orderBy works on real Timestamp + falls back to client sort for old data) ──
+  // ── Fetch latest 50 transactions — only 50 Firestore reads, newest first ──
   const loadTransactions = useCallback(async () => {
     if (!user) return;
     setLoading(true);
@@ -309,8 +303,6 @@ export default function WalletPage() {
           walletBalanceBefore: data.walletBalanceBefore || 0,
         };
       });
-      // Client-side sort as safety net (handles mixed old/new timestamp formats)
-      items.sort((a, b) => getTimestampMs(b._raw || {}) - getTimestampMs(a._raw || {}));
       setAllTransactions(items);
       setDisplayCount(PAGE_SIZE);
     } catch (e) {
