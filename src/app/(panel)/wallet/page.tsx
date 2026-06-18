@@ -25,6 +25,9 @@ import { useAuth } from '@/context/AuthContext';
 import {
   collection,
   getDocs,
+  query,
+  orderBy,
+  limit,
   doc,
   writeBatch,
   onSnapshot as docOnSnapshot,
@@ -85,17 +88,22 @@ function formatCoins(paisa: number): string {
   return coins % 1 === 0 ? `${Math.round(coins)} Coins` : `${parseFloat(coins.toFixed(2))} Coins`;
 }
 
-function safeTimestamp(val: any): string {
-  if (!val) return '';
-  if (typeof val === 'string') return val;
-  if (val && typeof val === 'object' && 'stringValue' in val) {
-    return typeof val.stringValue === 'string' ? val.stringValue : String(val.stringValue);
+function safeTimestamp(raw: Record<string, any>): string {
+  if (!raw) return '';
+  // 1. New format: timestampIST field (human-readable IST string)
+  if (raw.timestampIST && typeof raw.timestampIST === 'string') return raw.timestampIST;
+  // 2. Old format: timestamp was {stringValue: "31 May 2026, 7:21 pm IST"}
+  if (raw.timestamp && typeof raw.timestamp === 'object' && 'stringValue' in raw.timestamp) {
+    return typeof raw.timestamp.stringValue === 'string' ? raw.timestamp.stringValue : String(raw.timestamp.stringValue);
   }
-  if (val && typeof val === 'object' && 'seconds' in val) {
-    const d = new Date(val.seconds * 1000 + (val.nanoseconds || 0) / 1e6);
+  // 3. Real Firestore Timestamp: {seconds, nanoseconds}
+  if (raw.timestamp && typeof raw.timestamp === 'object' && 'seconds' in raw.timestamp) {
+    const d = new Date(raw.timestamp.seconds * 1000 + (raw.timestamp.nanoseconds || 0) / 1e6);
     return d.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true });
   }
-  return String(val);
+  // 4. Plain string
+  if (typeof raw.timestamp === 'string') return raw.timestamp;
+  return '';
 }
 
 function getTransactionCategory(doc: Record<string, any>): string {
@@ -214,13 +222,17 @@ function parseCustomDateString(str: string): number {
 function getTimestampMs(raw: Record<string, any>): number {
   const ts = raw.timestamp;
   if (!ts) return 0;
+  // 1. Real Firestore Timestamp: {seconds, nanoseconds} — fastest path
   if (ts && typeof ts === 'object' && 'seconds' in ts) {
     return ts.seconds * 1000 + (ts.nanoseconds || 0) / 1e6;
   }
+  // 2. Old format: {stringValue: "31 May 2026, 7:21 pm IST"}
   if (ts && typeof ts === 'object' && 'stringValue' in ts) {
     return parseCustomDateString(String(ts.stringValue));
   }
+  // 3. Plain number (epoch ms)
   if (typeof ts === 'number') return ts;
+  // 4. Plain string
   if (typeof ts === 'string') return parseCustomDateString(ts);
   return 0;
 }
@@ -259,18 +271,19 @@ export default function WalletPage() {
     totalDeposit: 0, entryFee: 0, totalPrizeDistribution: 0, totalRefunded: 0, withdrawnAmount: 0,
   });
 
-  // ── Fetch ALL transactions once, sort newest-first, virtual-paginate display ──
+  // ── Fetch latest 50 transactions (orderBy works on real Timestamp + falls back to client sort for old data) ──
   const loadTransactions = useCallback(async () => {
     if (!user) return;
     setLoading(true);
     try {
       const txnRef = collection(db, 'hosts', user.uid, 'transactionHistory');
-      const snap = await getDocs(txnRef);
+      const q = query(txnRef, orderBy('timestamp', 'desc'), limit(50));
+      const snap = await getDocs(q);
       const items = snap.docs.map((docSnap) => {
         const data = docSnap.data();
         return {
           id: docSnap.id, _raw: data,
-          timestamp: safeTimestamp(data.timestamp),
+          timestamp: safeTimestamp(data),
           transactionType: data.transactionType || '',
           transactionId: data.transactionId || docSnap.id,
           amount: data.amount || 0,
@@ -296,6 +309,7 @@ export default function WalletPage() {
           walletBalanceBefore: data.walletBalanceBefore || 0,
         };
       });
+      // Client-side sort as safety net (handles mixed old/new timestamp formats)
       items.sort((a, b) => getTimestampMs(b._raw || {}) - getTimestampMs(a._raw || {}));
       setAllTransactions(items);
       setDisplayCount(PAGE_SIZE);
