@@ -905,14 +905,19 @@ export default function ResultsPage() {
           ) : (
             <div className="overflow-x-auto -mx-1 px-1">
               {/* Table Header */}
-              <div className="grid grid-cols-[minmax(90px,1.2fr)_36px_38px_38px_38px_42px_48px_38px_44px_68px] gap-0.5 min-w-[520px]">
-                {['Name', '#', 'K', 'D', 'A', 'Dmg', 'Coins', 'Rank', 'Result', 'Action'].map((h) => (
-                  <div key={h} className="text-[8px] font-bold text-[oklch(0.40,0.04,290)] text-center py-1 px-0.5 uppercase tracking-wider">{h}</div>
-                ))}
+              <div className={`grid gap-0.5 ${tournamentMode === 'BattleRoyal' ? 'grid-cols-[minmax(90px,1.2fr)_36px_38px_48px_38px_44px_68px] min-w-[400px]' : 'grid-cols-[minmax(90px,1.2fr)_36px_38px_38px_38px_42px_48px_38px_44px_68px] min-w-[520px]'}`}>
+                {tournamentMode === 'BattleRoyal'
+                  ? ['Name', '#', 'K', 'Coins', 'Rank', 'Result', 'Action'].map((h) => (
+                      <div key={h} className="text-[8px] font-bold text-[oklch(0.40,0.04,290)] text-center py-1 px-0.5 uppercase tracking-wider">{h}</div>
+                    ))
+                  : ['Name', '#', 'K', 'D', 'A', 'Dmg', 'Coins', 'Rank', 'Result', 'Action'].map((h) => (
+                      <div key={h} className="text-[8px] font-bold text-[oklch(0.40,0.04,290)] text-center py-1 px-0.5 uppercase tracking-wider">{h}</div>
+                    ))
+                }
               </div>
               {/* Table Rows */}
               {filteredPlayers.map((player) => (
-                <div key={player.playerKey} className="grid grid-cols-[minmax(90px,1.2fr)_36px_38px_38px_38px_42px_48px_38px_44px_68px] gap-0.5 min-w-[520px] bg-[oklch(0.16,0.04,290)] border border-[oklch(0.25,0.05,290)] rounded-lg px-0.5 py-1 items-center hover:border-fuchsia-500/30 transition-colors">
+                <div key={player.playerKey} className={`grid gap-0.5 items-center bg-[oklch(0.16,0.04,290)] border border-[oklch(0.25,0.05,290)] rounded-lg px-0.5 py-1 hover:border-fuchsia-500/30 transition-colors ${tournamentMode === 'BattleRoyal' ? 'grid-cols-[minmax(90px,1.2fr)_36px_38px_48px_38px_44px_68px] min-w-[400px]' : 'grid-cols-[minmax(90px,1.2fr)_36px_38px_38px_38px_42px_48px_38px_44px_68px] min-w-[520px]'}`}>
                   {/* Name + Level */}
                   <div className="min-w-0 flex flex-col px-1">
                     <span className="text-[10px] font-bold text-white truncate leading-tight">{player.inGameName}</span>
@@ -924,18 +929,24 @@ export default function ResultsPage() {
                   <input type="number" value={player.kills}
                     onChange={(e) => updatePlayerField(player.playerKey, 'kills', Number(e.target.value))}
                     className="w-full bg-[oklch(0.20,0.04,290)] text-[10px] font-bold text-white text-center rounded py-0.5 outline-none focus:ring-1 focus:ring-fuchsia-500/40" />
-                  {/* Deaths */}
-                  <input type="number" value={player.deaths}
-                    onChange={(e) => updatePlayerField(player.playerKey, 'deaths', Number(e.target.value))}
-                    className="w-full bg-[oklch(0.20,0.04,290)] text-[10px] font-bold text-teal-400 text-center rounded py-0.5 outline-none focus:ring-1 focus:ring-fuchsia-500/40" />
-                  {/* Assists */}
-                  <input type="number" value={player.assists}
-                    onChange={(e) => updatePlayerField(player.playerKey, 'assists', Number(e.target.value))}
-                    className="w-full bg-[oklch(0.20,0.04,290)] text-[10px] font-bold text-white text-center rounded py-0.5 outline-none focus:ring-1 focus:ring-fuchsia-500/40" />
-                  {/* Damage */}
-                  <input type="number" value={player.damage}
-                    onChange={(e) => updatePlayerField(player.playerKey, 'damage', Number(e.target.value))}
-                    className="w-full bg-[oklch(0.20,0.04,290)] text-[10px] font-bold text-red-400 text-center rounded py-0.5 outline-none focus:ring-1 focus:ring-fuchsia-500/40" />
+                  {/* Deaths — hidden in BattleRoyal */}
+                  {tournamentMode !== 'BattleRoyal' && (
+                    <input type="number" value={player.deaths}
+                      onChange={(e) => updatePlayerField(player.playerKey, 'deaths', Number(e.target.value))}
+                      className="w-full bg-[oklch(0.20,0.04,290)] text-[10px] font-bold text-teal-400 text-center rounded py-0.5 outline-none focus:ring-1 focus:ring-fuchsia-500/40" />
+                  )}
+                  {/* Assists — hidden in BattleRoyal */}
+                  {tournamentMode !== 'BattleRoyal' && (
+                    <input type="number" value={player.assists}
+                      onChange={(e) => updatePlayerField(player.playerKey, 'assists', Number(e.target.value))}
+                      className="w-full bg-[oklch(0.20,0.04,290)] text-[10px] font-bold text-white text-center rounded py-0.5 outline-none focus:ring-1 focus:ring-fuchsia-500/40" />
+                  )}
+                  {/* Damage — hidden in BattleRoyal */}
+                  {tournamentMode !== 'BattleRoyal' && (
+                    <input type="number" value={player.damage}
+                      onChange={(e) => updatePlayerField(player.playerKey, 'damage', Number(e.target.value))}
+                      className="w-full bg-[oklch(0.20,0.04,290)] text-[10px] font-bold text-red-400 text-center rounded py-0.5 outline-none focus:ring-1 focus:ring-fuchsia-500/40" />
+                  )}
                   {/* Coins */}
                   <div className="relative">
                     <input type="number" value={Math.round(paisaToRupees(player.coinsEarned))}
