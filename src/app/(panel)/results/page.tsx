@@ -23,7 +23,6 @@ import {
   Info,
   Save,
   Trash2,
-  Lock,
 } from 'lucide-react';
 
 // ═══════════════════════════════════════════════════
@@ -894,104 +893,96 @@ export default function ResultsPage() {
           Players: {searchQuery ? `${filteredPlayers.length} / ${players.length} (filtered)` : players.length}
         </p>
 
-        {/* Player Cards */}
-        <div className="space-y-2.5">
+        {/* Player Table */}
+        <div className="space-y-1.5">
           {filteredPlayers.length === 0 && !loading ? (
-            <div className="flex flex-col items-center py-16 space-y-3">
-              <Target className="w-10 h-10 text-[oklch(0.30,0.04,290)]" />
-              <p className="text-xs text-[oklch(0.40,0.04,290)]">
+            <div className="flex flex-col items-center py-10 space-y-2">
+              <Target className="w-8 h-8 text-[oklch(0.30,0.04,290)]" />
+              <p className="text-[11px] text-[oklch(0.40,0.04,290)]">
                 {isTournamentValid ? 'No pending players found' : 'Select a tournament and click Refresh'}
               </p>
             </div>
-          ) : filteredPlayers.map((player) => (
-            <div key={player.playerKey} className="rounded-xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.28,0.05,290)] p-3 space-y-2">
-
-              {/* Row 1: LOCKED — Name + Level + SlotNo */}
-              <div className="flex items-center gap-1.5 bg-[oklch(0.22,0.04,290)] rounded-lg px-2.5 py-2">
-                <Lock className="w-3 h-3 text-[oklch(0.40,0.04,290)] shrink-0" />
-                <span className="text-xs font-bold text-white truncate min-w-0">{player.inGameName}</span>
-                <span className="text-[10px] text-[oklch(0.45,0.04,290)] shrink-0">Lv</span>
-                <span className="text-[11px] font-bold text-yellow-400 shrink-0">{player.inGameLevel}</span>
-                <span className="ml-auto text-[10px] text-[oklch(0.45,0.04,290)] shrink-0">Slot</span>
-                <span className="text-[11px] font-bold text-fuchsia-400 bg-fuchsia-500/10 px-1.5 py-0.5 rounded shrink-0">{player.positionSeat}</span>
-              </div>
-
-              {/* Row 2: LOCKED — UID */}
-              <div className="flex items-center gap-1.5 bg-[oklch(0.20,0.04,290)] rounded-lg px-2.5 py-1.5">
-                <Lock className="w-2.5 h-2.5 text-[oklch(0.35,0.04,290)] shrink-0" />
-                <span className="text-[10px] text-[oklch(0.45,0.04,290)] shrink-0">UID:</span>
-                <span className="text-[11px] text-[oklch(0.60,0.04,290)] font-mono">{player.inGameUID}</span>
-              </div>
-
-              {/* Row 3: EDITABLE — Kills + Deaths + Assists + Damage */}
-              <div className="grid grid-cols-4 gap-1.5">
-                {[
-                  { label: 'Kills', field: 'kills' as const, color: 'text-white' },
-                  { label: 'Death', field: 'deaths' as const, color: 'text-teal-400' },
-                  { label: 'Elim.', field: 'assists' as const, color: 'text-white' },
-                  { label: 'Dmg', field: 'damage' as const, color: 'text-red-400' },
-                ].map((item) => (
-                  <div key={item.field} className="bg-[oklch(0.20,0.04,290)] rounded-lg px-1.5 py-1.5 text-center">
-                    <p className="text-[9px] text-[oklch(0.45,0.04,290)] leading-none">{item.label}</p>
-                    <input type="number" value={player[item.field]}
-                      onChange={(e) => updatePlayerField(player.playerKey, item.field, Number(e.target.value))}
-                      className={`w-full bg-transparent text-xs font-bold ${item.color} text-center outline-none mt-0.5 -mb-px`} />
-                  </div>
+          ) : (
+            <div className="overflow-x-auto -mx-1 px-1">
+              {/* Table Header */}
+              <div className="grid grid-cols-[minmax(90px,1.2fr)_36px_38px_38px_38px_42px_48px_38px_44px_68px] gap-0.5 min-w-[520px]">
+                {['Name', '#', 'K', 'D', 'A', 'Dmg', 'Coins', 'Rank', 'Result', 'Action'].map((h) => (
+                  <div key={h} className="text-[8px] font-bold text-[oklch(0.40,0.04,290)] text-center py-1 px-0.5 uppercase tracking-wider">{h}</div>
                 ))}
               </div>
-
-              {/* Row 4: EDITABLE — Coins Earned + Rank + Result */}
-              <div className="grid grid-cols-3 gap-1.5">
-                <div className="bg-[oklch(0.20,0.04,290)] rounded-lg px-1.5 py-1.5 text-center">
-                  <p className="text-[9px] text-[oklch(0.45,0.04,290)] leading-none">Coins</p>
-                  <input type="number" value={Math.round(paisaToRupees(player.coinsEarned))}
-                    onChange={(e) => updatePlayerField(player.playerKey, 'coinsEarned', rupeesToPaisa(Number(e.target.value)))}
-                    className="w-full bg-transparent text-xs font-bold text-yellow-400 text-center outline-none mt-0.5 -mb-px" />
-                  {isAutoCalcEnabled && !player.isManuallyEdited && (
-                    <p className="text-[7px] text-[oklch(0.35,0.04,290)]">auto</p>
-                  )}
-                </div>
-                <div className="bg-[oklch(0.20,0.04,290)] rounded-lg px-1.5 py-1.5 text-center">
-                  <p className="text-[9px] text-[oklch(0.45,0.04,290)] leading-none">Rank</p>
+              {/* Table Rows */}
+              {filteredPlayers.map((player) => (
+                <div key={player.playerKey} className="grid grid-cols-[minmax(90px,1.2fr)_36px_38px_38px_38px_42px_48px_38px_44px_68px] gap-0.5 min-w-[520px] bg-[oklch(0.16,0.04,290)] border border-[oklch(0.25,0.05,290)] rounded-lg px-0.5 py-1 items-center hover:border-fuchsia-500/30 transition-colors">
+                  {/* Name + Level */}
+                  <div className="min-w-0 flex flex-col px-1">
+                    <span className="text-[10px] font-bold text-white truncate leading-tight">{player.inGameName}</span>
+                    <span className="text-[8px] text-[oklch(0.45,0.04,290)] font-mono leading-tight">{player.inGameUID} · Lv{player.inGameLevel}</span>
+                  </div>
+                  {/* Slot */}
+                  <div className="text-[10px] font-bold text-fuchsia-400 text-center">{player.positionSeat}</div>
+                  {/* Kills */}
+                  <input type="number" value={player.kills}
+                    onChange={(e) => updatePlayerField(player.playerKey, 'kills', Number(e.target.value))}
+                    className="w-full bg-[oklch(0.20,0.04,290)] text-[10px] font-bold text-white text-center rounded py-0.5 outline-none focus:ring-1 focus:ring-fuchsia-500/40" />
+                  {/* Deaths */}
+                  <input type="number" value={player.deaths}
+                    onChange={(e) => updatePlayerField(player.playerKey, 'deaths', Number(e.target.value))}
+                    className="w-full bg-[oklch(0.20,0.04,290)] text-[10px] font-bold text-teal-400 text-center rounded py-0.5 outline-none focus:ring-1 focus:ring-fuchsia-500/40" />
+                  {/* Assists */}
+                  <input type="number" value={player.assists}
+                    onChange={(e) => updatePlayerField(player.playerKey, 'assists', Number(e.target.value))}
+                    className="w-full bg-[oklch(0.20,0.04,290)] text-[10px] font-bold text-white text-center rounded py-0.5 outline-none focus:ring-1 focus:ring-fuchsia-500/40" />
+                  {/* Damage */}
+                  <input type="number" value={player.damage}
+                    onChange={(e) => updatePlayerField(player.playerKey, 'damage', Number(e.target.value))}
+                    className="w-full bg-[oklch(0.20,0.04,290)] text-[10px] font-bold text-red-400 text-center rounded py-0.5 outline-none focus:ring-1 focus:ring-fuchsia-500/40" />
+                  {/* Coins */}
+                  <div className="relative">
+                    <input type="number" value={Math.round(paisaToRupees(player.coinsEarned))}
+                      onChange={(e) => updatePlayerField(player.playerKey, 'coinsEarned', rupeesToPaisa(Number(e.target.value)))}
+                      className="w-full bg-[oklch(0.20,0.04,290)] text-[10px] font-bold text-yellow-400 text-center rounded py-0.5 outline-none focus:ring-1 focus:ring-yellow-500/40 pr-3" />
+                    {isAutoCalcEnabled && !player.isManuallyEdited && (
+                      <span className="absolute right-0.5 top-1/2 -translate-y-1/2 text-[6px] text-[oklch(0.35,0.04,290)]">A</span>
+                    )}
+                  </div>
+                  {/* Rank */}
                   <input type="number" value={player.rank}
                     onChange={(e) => updatePlayerField(player.playerKey, 'rank', Number(e.target.value))}
-                    className="w-full bg-transparent text-xs font-bold text-white text-center outline-none mt-0.5 -mb-px" />
+                    className="w-full bg-[oklch(0.20,0.04,290)] text-[10px] font-bold text-white text-center rounded py-0.5 outline-none focus:ring-1 focus:ring-fuchsia-500/40" />
+                  {/* Result Badge (auto) */}
+                  <div className="text-center px-0.5">
+                    <span className={`inline-block text-[8px] font-bold px-1.5 py-0.5 rounded-full leading-none ${
+                      player.result === 'win' ? 'bg-green-500/20 text-green-400' :
+                      player.result === 'lose' ? 'bg-red-500/20 text-red-400' :
+                      player.result === 'top10' ? 'bg-blue-500/20 text-blue-400' :
+                      player.result === 'dq' ? 'bg-orange-500/20 text-orange-400' :
+                      'bg-[oklch(0.25,0.04,290)] text-[oklch(0.45,0.04,290)]'
+                    }`}>
+                      {player.result === 'win' ? 'WIN' : player.result === 'lose' ? 'LOSS' : player.result === 'top10' ? 'T10' : player.result === 'dq' ? 'DQ' : '—'}
+                    </span>
+                  </div>
+                  {/* Actions */}
+                  <div className="flex gap-0.5 px-0.5">
+                    <button onClick={() => updatePlayer(player)} disabled={updatingPlayer === player.playerKey}
+                      className="flex-1 flex items-center justify-center py-1 rounded bg-green-500/20 text-green-400 hover:bg-green-500/30 active:scale-95 transition-all disabled:opacity-30" title="Update">
+                      {updatingPlayer === player.playerKey
+                        ? <div className="w-2.5 h-2.5 border-2 border-green-400/30 border-t-green-400 rounded-full animate-spin" />
+                        : <Save className="w-3 h-3" />}
+                    </button>
+                    <button onClick={() => handleDeleteClick(player)}
+                      className="flex-1 flex items-center justify-center py-1 rounded bg-red-500/20 text-red-400 hover:bg-red-500/30 active:scale-95 transition-all" title="Delete">
+                      <Trash2 className="w-2.5 h-2.5" />
+                    </button>
+                  </div>
                 </div>
-                <div className="bg-[oklch(0.20,0.04,290)] rounded-lg px-1.5 py-1.5">
-                  <p className="text-[9px] text-[oklch(0.45,0.04,290)] text-center leading-none">Result</p>
-                  <Select value={player.result} onValueChange={(v) => updatePlayerField(player.playerKey, 'result', v)}>
-                    <SelectTrigger className="bg-transparent border border-[oklch(0.30,0.06,290)] text-white h-7 rounded-md text-[10px] px-1.5 mt-0.5">
-                      <SelectValue placeholder="Select" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="win">Win</SelectItem>
-                      <SelectItem value="lose">Lose</SelectItem>
-                      <SelectItem value="top10">Top 10</SelectItem>
-                      <SelectItem value="dq">DQ</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              {/* Action Buttons */}
-              <div className="grid grid-cols-2 gap-2">
-                <button onClick={() => updatePlayer(player)} disabled={updatingPlayer === player.playerKey}
-                  className="flex items-center justify-center gap-1.5 py-2 rounded-lg bg-gradient-to-r from-green-500 to-emerald-600 text-white font-semibold text-xs shadow-lg shadow-green-500/15 active:scale-[0.98] transition-transform disabled:opacity-40">
-                  {updatingPlayer === player.playerKey ? <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" /> :
-                    <><Save className="w-3 h-3" /> Update</>}
-                </button>
-                <button onClick={() => handleDeleteClick(player)}
-                  className="flex items-center justify-center gap-1.5 py-2 rounded-lg bg-gradient-to-r from-red-500 to-red-600 text-white font-semibold text-xs shadow-lg shadow-red-500/15 active:scale-[0.98] transition-transform">
-                  <Trash2 className="w-3 h-3" /> Delete
-                </button>
-              </div>
+              ))}
             </div>
-          ))}
+          )}
 
           {/* Loading spinner */}
           {loading && (
-            <div className="flex items-center justify-center py-8">
-              <div className="w-6 h-6 border-2 border-fuchsia-500/30 border-t-fuchsia-500 rounded-full animate-spin" />
+            <div className="flex items-center justify-center py-6">
+              <div className="w-5 h-5 border-2 border-fuchsia-500/30 border-t-fuchsia-500 rounded-full animate-spin" />
             </div>
           )}
         </div>
