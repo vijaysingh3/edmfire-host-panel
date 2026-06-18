@@ -265,6 +265,11 @@ export default function WalletPage() {
   const [hasMore, setHasMore] = useState(true);
   const [selectedTxn, setSelectedTxn] = useState<TransactionItem | null>(null);
 
+  // Type-specific tab data
+  const [typeTxns, setTypeTxns] = useState<TransactionItem[]>([]);
+  const [loadingType, setLoadingType] = useState(false);
+  const lastFetchedType = useRef<string>('');
+
   // Pagination cursor
   const lastDocRef = useRef<QueryDocumentSnapshot | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -311,15 +316,23 @@ export default function WalletPage() {
         setHasMore(false);
       } else {
         const items = snap.docs.map(parseTxnDoc);
-        // Update cursor to last doc
-        lastDocRef.current = snap.docs[snap.docs.length - 1];
+        // Client-side sort by timestamp (newest first) — handles mixed timestamp formats
+        items.sort((a, b) => getTimestampMs(b._raw || {}) - getTimestampMs(a._raw || {}));
+        // Update cursor to last doc (by timestamp ms, not array order)
+        const sortedByMs = [...items].sort((a, b) => getTimestampMs(a._raw || {}) - getTimestampMs(b._raw || {}));
+        const oldestItem = sortedByMs[0];
+        lastDocRef.current = snap.docs.find(d => d.id === oldestItem?.id) || snap.docs[snap.docs.length - 1];
         // If we got fewer than PAGE_SIZE, no more data
         if (snap.docs.length < PAGE_SIZE) setHasMore(false);
 
         if (reset) {
           setAllTransactions(items);
         } else {
-          setAllTransactions((prev) => [...prev, ...items]);
+          setAllTransactions((prev) => {
+            const merged = [...prev, ...items];
+            merged.sort((a, b) => getTimestampMs(b._raw || {}) - getTimestampMs(a._raw || {}));
+            return merged;
+          });
         }
       }
     } catch (e) {
@@ -371,14 +384,39 @@ export default function WalletPage() {
     return () => unsubscribe();
   }, [user, authLoading]);
 
+  // ── Fetch Type-Specific Transactions (fresh 50 of that type) ──
+  useEffect(() => {
+    if (authLoading || !user || loading || activeTab === 'all') return;
+    if (lastFetchedType.current === activeTab) return;
+    lastFetchedType.current = activeTab;
+
+    setLoadingType(true);
+    const txnRef = collection(db, 'hosts', user.uid, 'transactionHistory');
+    // Fetch latest 100 mixed, filter client-side to the type
+    getDocs(query(txnRef, orderBy('timestamp', 'desc'), limit(100)))
+      .then((snap) => {
+        const items = snap.docs.map(parseTxnDoc);
+        items.sort((a, b) => getTimestampMs(b._raw || {}) - getTimestampMs(a._raw || {}));
+        const matched = items.filter((t) => getTransactionCategory(t._raw || {}) === activeTab);
+        setTypeTxns(matched.slice(0, 50));
+      })
+      .catch((e) => console.error('Type txn fetch error:', e))
+      .finally(() => setLoadingType(false));
+  }, [activeTab, user, authLoading, loading]);
+
+  // Reset type cache when switching to All or when transactions refresh
+  useEffect(() => {
+    if (activeTab === 'all') {
+      lastFetchedType.current = '';
+      setTypeTxns([]);
+    }
+  }, [activeTab, allTransactions]);
+
   // ── Client-side filter ──
   const filtered = useMemo(() => {
     if (activeTab === 'all') return allTransactions;
-    return allTransactions.filter((t) => {
-      const cat = getTransactionCategory(t._raw || {});
-      return cat === activeTab;
-    });
-  }, [allTransactions, activeTab]);
+    return typeTxns;
+  }, [allTransactions, typeTxns, activeTab]);
 
   // ── Infinite Scroll via IntersectionObserver ──
   useEffect(() => {
@@ -456,6 +494,7 @@ export default function WalletPage() {
       setCleanResult({ deleted, message: `Successfully deleted ${deleted} transaction${deleted !== 1 ? 's' : ''}.` });
 
       // Refresh with paginated reload
+      lastFetchedType.current = '';
       await loadTransactions(true);
     } catch (err) {
       console.error('Clean history error:', err);
@@ -741,10 +780,10 @@ export default function WalletPage() {
 
         {/* Transaction List */}
         <div className="space-y-2">
-          {loading ? (
+          {loading || loadingType ? (
             <div className="flex flex-col items-center py-16 space-y-3">
               <div className="w-6 h-6 border-2 border-cyan-400/30 border-t-cyan-400 rounded-full animate-spin" />
-              <p className="text-xs text-[oklch(0.45,0.04,290)]">Loading transactions...</p>
+              <p className="text-xs text-[oklch(0.45,0.04,290)]">{loadingType ? `Loading ${activeTab.replace('_', ' ')} transactions...` : 'Loading transactions...'}</p>
             </div>
           ) : filtered.length === 0 ? (
             <div className="flex flex-col items-center py-16 space-y-3">
@@ -803,8 +842,8 @@ export default function WalletPage() {
             </div>
           )}
 
-          {/* Infinite Scroll Sentinel + Loading / End indicators */}
-          {!loading && filtered.length > 0 && (
+          {/* Infinite Scroll Sentinel + Loading / End indicators (All tab only) */}
+          {!loading && !loadingType && activeTab === 'all' && filtered.length > 0 && (
             <div ref={sentinelRef} className="py-4 flex flex-col items-center space-y-2">
               {loadingMore ? (
                 <>
