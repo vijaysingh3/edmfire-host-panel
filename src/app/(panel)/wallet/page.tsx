@@ -19,12 +19,14 @@ import {
   Gift,
   Upload,
   CircleDollarSign,
+  Trash2,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import {
   collection,
   getDocs,
   doc,
+  writeBatch,
   onSnapshot as docOnSnapshot,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
@@ -219,6 +221,12 @@ export default function WalletPage() {
   const [loading, setLoading] = useState(true);
   const [selectedTxn, setSelectedTxn] = useState<TransactionItem | null>(null);
 
+  // ── Clean History Modal State ──
+  const [showCleanModal, setShowCleanModal] = useState(false);
+  const [cleanType, setCleanType] = useState('all');
+  const [cleaning, setCleaning] = useState(false);
+  const [cleanResult, setCleanResult] = useState<{ deleted: number; message: string } | null>(null);
+
   // ── Aggregated stats from transactionRecord (saves read quota) ──
   const [recordStats, setRecordStats] = useState({
     totalDeposit: 0,
@@ -326,6 +334,99 @@ export default function WalletPage() {
     totalRefund: recordStats.totalRefunded,
     totalWithdrawal: recordStats.withdrawnAmount,
   }), [recordStats]);
+
+  // ── Clean History Handler ──
+  const handleCleanHistory = async () => {
+    if (!user || cleaning) return;
+    setCleaning(true);
+    setCleanResult(null);
+
+    try {
+      const txnRef = collection(db, 'hosts', user.uid, 'transactionHistory');
+      const snap = await getDocs(txnRef);
+      const now = Date.now();
+      const cutoff = now - 24 * 60 * 60 * 1000; // 24 hours ago
+
+      const toDelete: string[] = [];
+
+      snap.forEach((docSnap) => {
+        const data = docSnap.data();
+        const tsMs = getTimestampMs(data);
+
+        // Must be older than 24 hours
+        if (tsMs === 0 || tsMs >= cutoff) return;
+
+        // Filter by type
+        if (cleanType !== 'all') {
+          const cat = getTransactionCategory(data);
+          if (cat !== cleanType) return;
+        }
+
+        toDelete.push(docSnap.id);
+      });
+
+      if (toDelete.length === 0) {
+        setCleanResult({ deleted: 0, message: 'No transactions found older than 24 hours for this type.' });
+        setCleaning(false);
+        return;
+      }
+
+      // Batch delete (max 500 per batch)
+      let deleted = 0;
+      for (let i = 0; i < toDelete.length; i += 500) {
+        const batch = writeBatch(db);
+        const chunk = toDelete.slice(i, i + 500);
+        chunk.forEach((id) => {
+          batch.delete(doc(db, 'hosts', user.uid, 'transactionHistory', id));
+        });
+        await batch.commit();
+        deleted += chunk.length;
+      }
+
+      setCleanResult({ deleted, message: `Successfully deleted ${deleted} transaction${deleted !== 1 ? 's' : ''}.` });
+
+      // Refresh transaction list
+      const freshSnap = await getDocs(txnRef);
+      const items: TransactionItem[] = freshSnap.docs.map((docSnap) => {
+        const data = docSnap.data();
+        return {
+          id: docSnap.id,
+          _raw: data,
+          timestamp: safeTimestamp(data.timestamp),
+          transactionType: data.transactionType || '',
+          transactionId: data.transactionId || docSnap.id,
+          amount: data.amount || 0,
+          paymentStatus: data.paymentStatus || data.status || '',
+          status: data.status || data.paymentStatus || '',
+          description: data.description || '',
+          tournamentId: data.tournamentId || '',
+          tournamentType: data.tournamentType || '',
+          playerName: data.playerName || '',
+          playerUid: data.playerUid || '',
+          userId: data.userId || '',
+          slotNumber: data.slotNumber || 0,
+          entryFee: data.entryFee || 0,
+          referralBonusUsed: data.referralBonusUsed || 0,
+          refundPercent: data.refundPercent || 0,
+          walletBalanceAfter: data.walletBalanceAfter || 0,
+          category: data.category || '',
+          upiId: data.upiId || '',
+          processedAt: data.processedAt,
+          requestedAt: data.requestedAt,
+          bankDetail: data.bankDetail || '',
+          notes: data.notes || '',
+          walletBalanceBefore: data.walletBalanceBefore || 0,
+        };
+      });
+      items.sort((a, b) => getTimestampMs(b._raw || {}) - getTimestampMs(a._raw || {}));
+      setAllTransactions(items);
+    } catch (err) {
+      console.error('Clean history error:', err);
+      setCleanResult({ deleted: 0, message: 'Error deleting transactions. Try again.' });
+    } finally {
+      setCleaning(false);
+    }
+  };
 
   // ═══════════════════════════════════════════════════
   // DETAIL VIEW
@@ -478,14 +579,112 @@ export default function WalletPage() {
         </div>
 
         {/* Transaction History Header */}
-        <div className="text-center py-2">
-          <h2 className="text-lg font-bold bg-gradient-to-r from-cyan-400 to-teal-400 bg-clip-text text-transparent">
-            Transaction History
-          </h2>
-          <p className="text-[11px] text-[oklch(0.45,0.04,290)] mt-0.5">
-            {allTransactions.length > 0 ? `${filtered.length} transaction${filtered.length !== 1 ? 's' : ''}` : 'No transactions yet'}
-          </p>
+        <div className="flex items-center justify-between py-2">
+          <div className="text-center">
+            <h2 className="text-lg font-bold bg-gradient-to-r from-cyan-400 to-teal-400 bg-clip-text text-transparent">
+              Transaction History
+            </h2>
+            <p className="text-[11px] text-[oklch(0.45,0.04,290)] mt-0.5">
+              {allTransactions.length > 0 ? `${filtered.length} transaction${filtered.length !== 1 ? 's' : ''}` : 'No transactions yet'}
+            </p>
+          </div>
+          {allTransactions.length > 0 && (
+            <button
+              onClick={() => { setCleanType('all'); setCleanResult(null); setShowCleanModal(true); }}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-medium hover:bg-red-500/20 transition-colors active:scale-[0.97]">
+              <Trash2 className="w-3.5 h-3.5" />
+              Clean
+            </button>
+          )}
         </div>
+
+        {/* Clean History Modal */}
+        {showCleanModal && (
+          <div className="fixed inset-0 z-50 flex items-end lg:items-center justify-center">
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => !cleaning && setShowCleanModal(false)} />
+            <div className="relative w-full max-w-md mx-4 mb-4 lg:mb-0 rounded-2xl bg-[oklch(0.16,0.04,290)] border border-[oklch(0.30,0.06,290)] p-5 space-y-4 animate-in slide-in-from-bottom-4">
+              {/* Modal Header */}
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-red-500/15 flex items-center justify-center">
+                  <Trash2 className="w-5 h-5 text-red-400" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Clean History</h3>
+                  <p className="text-[11px] text-[oklch(0.50,0.04,290)]">Delete old transaction data</p>
+                </div>
+              </div>
+
+              {/* Transaction Type Dropdown */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-[oklch(0.60,0.04,290)]">Transaction Type</label>
+                <select
+                  value={cleanType}
+                  onChange={(e) => setCleanType(e.target.value)}
+                  disabled={cleaning}
+                  className="w-full px-3 py-2.5 rounded-xl bg-[oklch(0.22,0.04,290)] border border-[oklch(0.30,0.06,290)] text-sm text-white focus:outline-none focus:border-cyan-500/50 transition-colors disabled:opacity-50 [&>option]:bg-[#1a1232] [&>option]:text-white"
+                >
+                  <option value="all">All Types</option>
+                  <option value="deposit">Deposit</option>
+                  <option value="entry_fee">Entry Fee</option>
+                  <option value="prize">Prize Distribution</option>
+                  <option value="refund">Refund</option>
+                  <option value="withdrawal">Withdrawal</option>
+                </select>
+              </div>
+
+              {/* Date Range Info */}
+              <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20">
+                <Clock className="w-4 h-4 text-amber-400 shrink-0" />
+                <p className="text-xs text-amber-300">
+                  Only transactions <span className="font-bold">older than 24 hours</span> will be deleted.
+                </p>
+              </div>
+
+              {/* Result Message */}
+              {cleanResult && (
+                <div className={`flex items-center gap-2 px-3 py-2.5 rounded-xl ${
+                  cleanResult.deleted > 0
+                    ? 'bg-green-500/10 border border-green-500/20'
+                    : 'bg-amber-500/10 border border-amber-500/20'
+                }`}>
+                  {cleanResult.deleted > 0
+                    ? <CheckCircle2 className="w-4 h-4 text-green-400 shrink-0" />
+                    : <Clock className="w-4 h-4 text-amber-400 shrink-0" />
+                  }
+                  <p className={`text-xs ${cleanResult.deleted > 0 ? 'text-green-300' : 'text-amber-300'}`}>{cleanResult.message}</p>
+                </div>
+              )}
+
+              {/* Actions */}
+              <div className="flex gap-2 pt-1">
+                <button
+                  onClick={() => setShowCleanModal(false)}
+                  disabled={cleaning}
+                  className="flex-1 py-2.5 rounded-xl bg-[oklch(0.22,0.04,290)] border border-[oklch(0.30,0.06,290)] text-sm font-medium text-[oklch(0.70,0.04,290)] hover:bg-[oklch(0.26,0.04,290)] transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleCleanHistory}
+                  disabled={cleaning}
+                  className="flex-1 py-2.5 rounded-xl bg-red-500 text-sm font-bold text-white hover:bg-red-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {cleaning ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      Deleting...
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="w-4 h-4" />
+                      Delete
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Filter Tabs */}
         <div className="rounded-2xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.30,0.06,290)] p-3">
