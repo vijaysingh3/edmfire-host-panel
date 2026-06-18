@@ -28,7 +28,6 @@ import {
   doc,
   writeBatch,
   query,
-  orderBy,
   limit,
   startAfter,
   onSnapshot as docOnSnapshot,
@@ -192,7 +191,31 @@ function getTxnMeta(txn: TransactionItem): string {
 
 // ═══════════════════════════════════════════════════
 // SORT HELPER — Extract ms from any timestamp format
+// Handles: Firestore Timestamp objects, numbers, ISO strings,
+// and custom format like "31 May 2026, 7:21 pm IST"
 // ═══════════════════════════════════════════════════
+function parseCustomDateString(str: string): number {
+  // Try native parser first
+  const d = new Date(str);
+  if (!isNaN(d.getTime())) return d.getTime();
+
+  // Parse "31 May 2026, 7:21 pm IST" format
+  const m = str.match(/^(\d{1,2})\s+(\w{3,9})\s+(\d{4}),\s*(\d{1,2}):(\d{2})\s*(am|pm)/i);
+  if (m) {
+    const months: Record<string, number> = {
+      jan:0,feb:1,mar:2,apr:3,may:4,jun:5,
+      jul:6,aug:7,sep:8,oct:9,nov:10,dec:11,
+    };
+    const mon = months[m[2].toLowerCase().slice(0,3)];
+    if (mon === undefined) return 0;
+    let h = parseInt(m[4]);
+    if (m[6].toLowerCase() === 'pm' && h !== 12) h += 12;
+    if (m[6].toLowerCase() === 'am' && h === 12) h = 0;
+    return new Date(parseInt(m[3]), mon, parseInt(m[1]), h, parseInt(m[5])).getTime();
+  }
+  return 0;
+}
+
 function getTimestampMs(raw: Record<string, any>): number {
   const ts = raw.timestamp;
   if (!ts) return 0;
@@ -200,10 +223,7 @@ function getTimestampMs(raw: Record<string, any>): number {
     return ts.seconds * 1000 + (ts.nanoseconds || 0) / 1e6;
   }
   if (typeof ts === 'number') return ts;
-  if (typeof ts === 'string') {
-    const d = new Date(ts);
-    return isNaN(d.getTime()) ? 0 : d.getTime();
-  }
+  if (typeof ts === 'string') return parseCustomDateString(ts);
   return 0;
 }
 
@@ -265,11 +285,6 @@ export default function WalletPage() {
   const [hasMore, setHasMore] = useState(true);
   const [selectedTxn, setSelectedTxn] = useState<TransactionItem | null>(null);
 
-  // Type-specific tab data
-  const [typeTxns, setTypeTxns] = useState<TransactionItem[]>([]);
-  const [loadingType, setLoadingType] = useState(false);
-  const lastFetchedType = useRef<string>('');
-
   // Pagination cursor
   const lastDocRef = useRef<QueryDocumentSnapshot | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -289,7 +304,9 @@ export default function WalletPage() {
     withdrawnAmount: 0,
   });
 
-  // ── Paginated Transaction Fetch (50 per batch, newest first) ──
+  // ── Paginated Transaction Fetch (50 per batch, client-side newest-first sort) ──
+  // Note: timestamp is stored as string ("31 May 2026, 7:21 pm IST"), so we can't
+  // use Firestore orderBy for chronological order. We paginate by doc ID and sort client-side.
   const loadTransactions = useCallback(async (reset: boolean = false) => {
     if (!user) return;
     if (reset) {
@@ -304,9 +321,9 @@ export default function WalletPage() {
       const txnRef = collection(db, 'hosts', user.uid, 'transactionHistory');
       let q;
       if (reset || !lastDocRef.current) {
-        q = query(txnRef, orderBy('timestamp', 'desc'), limit(PAGE_SIZE));
+        q = query(txnRef, limit(PAGE_SIZE));
       } else {
-        q = query(txnRef, orderBy('timestamp', 'desc'), startAfter(lastDocRef.current), limit(PAGE_SIZE));
+        q = query(txnRef, startAfter(lastDocRef.current), limit(PAGE_SIZE));
       }
 
       const snap = await getDocs(q);
@@ -316,13 +333,10 @@ export default function WalletPage() {
         setHasMore(false);
       } else {
         const items = snap.docs.map(parseTxnDoc);
-        // Client-side sort by timestamp (newest first) — handles mixed timestamp formats
+        // Client-side sort: newest first (handles string timestamps like "31 May 2026, 7:21 pm IST")
         items.sort((a, b) => getTimestampMs(b._raw || {}) - getTimestampMs(a._raw || {}));
-        // Update cursor to last doc (by timestamp ms, not array order)
-        const sortedByMs = [...items].sort((a, b) => getTimestampMs(a._raw || {}) - getTimestampMs(b._raw || {}));
-        const oldestItem = sortedByMs[0];
-        lastDocRef.current = snap.docs.find(d => d.id === oldestItem?.id) || snap.docs[snap.docs.length - 1];
-        // If we got fewer than PAGE_SIZE, no more data
+        // Cursor = last doc from this batch (for next page)
+        lastDocRef.current = snap.docs[snap.docs.length - 1];
         if (snap.docs.length < PAGE_SIZE) setHasMore(false);
 
         if (reset) {
@@ -384,39 +398,14 @@ export default function WalletPage() {
     return () => unsubscribe();
   }, [user, authLoading]);
 
-  // ── Fetch Type-Specific Transactions (fresh 50 of that type) ──
-  useEffect(() => {
-    if (authLoading || !user || loading || activeTab === 'all') return;
-    if (lastFetchedType.current === activeTab) return;
-    lastFetchedType.current = activeTab;
-
-    setLoadingType(true);
-    const txnRef = collection(db, 'hosts', user.uid, 'transactionHistory');
-    // Fetch latest 100 mixed, filter client-side to the type
-    getDocs(query(txnRef, orderBy('timestamp', 'desc'), limit(100)))
-      .then((snap) => {
-        const items = snap.docs.map(parseTxnDoc);
-        items.sort((a, b) => getTimestampMs(b._raw || {}) - getTimestampMs(a._raw || {}));
-        const matched = items.filter((t) => getTransactionCategory(t._raw || {}) === activeTab);
-        setTypeTxns(matched.slice(0, 50));
-      })
-      .catch((e) => console.error('Type txn fetch error:', e))
-      .finally(() => setLoadingType(false));
-  }, [activeTab, user, authLoading, loading]);
-
-  // Reset type cache when switching to All or when transactions refresh
-  useEffect(() => {
-    if (activeTab === 'all') {
-      lastFetchedType.current = '';
-      setTypeTxns([]);
-    }
-  }, [activeTab, allTransactions]);
-
-  // ── Client-side filter ──
+  // ── Client-side filter (from loaded paginated data) ──
   const filtered = useMemo(() => {
     if (activeTab === 'all') return allTransactions;
-    return typeTxns;
-  }, [allTransactions, typeTxns, activeTab]);
+    return allTransactions.filter((t) => {
+      const cat = getTransactionCategory(t._raw || {});
+      return cat === activeTab;
+    });
+  }, [allTransactions, activeTab]);
 
   // ── Infinite Scroll via IntersectionObserver ──
   useEffect(() => {
@@ -494,7 +483,6 @@ export default function WalletPage() {
       setCleanResult({ deleted, message: `Successfully deleted ${deleted} transaction${deleted !== 1 ? 's' : ''}.` });
 
       // Refresh with paginated reload
-      lastFetchedType.current = '';
       await loadTransactions(true);
     } catch (err) {
       console.error('Clean history error:', err);
@@ -780,10 +768,10 @@ export default function WalletPage() {
 
         {/* Transaction List */}
         <div className="space-y-2">
-          {loading || loadingType ? (
+          {loading ? (
             <div className="flex flex-col items-center py-16 space-y-3">
               <div className="w-6 h-6 border-2 border-cyan-400/30 border-t-cyan-400 rounded-full animate-spin" />
-              <p className="text-xs text-[oklch(0.45,0.04,290)]">{loadingType ? `Loading ${activeTab.replace('_', ' ')} transactions...` : 'Loading transactions...'}</p>
+              <p className="text-xs text-[oklch(0.45,0.04,290)]">Loading transactions...</p>
             </div>
           ) : filtered.length === 0 ? (
             <div className="flex flex-col items-center py-16 space-y-3">
@@ -842,8 +830,8 @@ export default function WalletPage() {
             </div>
           )}
 
-          {/* Infinite Scroll Sentinel + Loading / End indicators (All tab only) */}
-          {!loading && !loadingType && activeTab === 'all' && filtered.length > 0 && (
+          {/* Infinite Scroll Sentinel + Loading / End indicators */}
+          {!loading && filtered.length > 0 && (
             <div ref={sentinelRef} className="py-4 flex flex-col items-center space-y-2">
               {loadingMore ? (
                 <>
