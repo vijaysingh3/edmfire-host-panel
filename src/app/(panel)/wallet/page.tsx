@@ -92,6 +92,10 @@ function formatCoins(paisa: number): string {
 function safeTimestamp(val: any): string {
   if (!val) return '';
   if (typeof val === 'string') return val;
+  // Handle Firestore {stringValue: "31 May 2026, 7:21 pm IST"} format
+  if (val && typeof val === 'object' && 'stringValue' in val) {
+    return typeof val.stringValue === 'string' ? val.stringValue : String(val.stringValue);
+  }
   if (val && typeof val === 'object' && 'seconds' in val) {
     const d = new Date(val.seconds * 1000 + (val.nanoseconds || 0) / 1e6);
     return d.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true });
@@ -219,8 +223,13 @@ function parseCustomDateString(str: string): number {
 function getTimestampMs(raw: Record<string, any>): number {
   const ts = raw.timestamp;
   if (!ts) return 0;
+  // Firestore Timestamp object {seconds, nanoseconds}
   if (ts && typeof ts === 'object' && 'seconds' in ts) {
     return ts.seconds * 1000 + (ts.nanoseconds || 0) / 1e6;
+  }
+  // Handle {stringValue: "31 May 2026, 7:21 pm IST"} format
+  if (ts && typeof ts === 'object' && 'stringValue' in ts) {
+    return parseCustomDateString(String(ts.stringValue));
   }
   if (typeof ts === 'number') return ts;
   if (typeof ts === 'string') return parseCustomDateString(ts);
