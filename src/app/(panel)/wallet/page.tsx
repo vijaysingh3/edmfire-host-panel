@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import {
   Wallet,
@@ -27,7 +27,12 @@ import {
   getDocs,
   doc,
   writeBatch,
+  query,
+  orderBy,
+  limit,
+  startAfter,
   onSnapshot as docOnSnapshot,
+  type QueryDocumentSnapshot,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
@@ -66,6 +71,8 @@ interface TransactionItem {
 // ═══════════════════════════════════════════════════
 // CONSTANTS
 // ═══════════════════════════════════════════════════
+const PAGE_SIZE = 50;
+
 const filterTabs = [
   { key: 'all', label: 'All' },
   { key: 'deposit', label: 'Deposit' },
@@ -211,6 +218,41 @@ const statusConfig: Record<string, { color: string; icon: React.ReactNode }> = {
 };
 
 // ═══════════════════════════════════════════════════
+// PARSE DOC SNAPSHOT → TransactionItem (avoids duplication)
+// ═══════════════════════════════════════════════════
+function parseTxnDoc(docSnap: QueryDocumentSnapshot): TransactionItem {
+  const data = docSnap.data();
+  return {
+    id: docSnap.id,
+    _raw: data,
+    timestamp: safeTimestamp(data.timestamp),
+    transactionType: data.transactionType || '',
+    transactionId: data.transactionId || docSnap.id,
+    amount: data.amount || 0,
+    paymentStatus: data.paymentStatus || data.status || '',
+    status: data.status || data.paymentStatus || '',
+    description: data.description || '',
+    tournamentId: data.tournamentId || '',
+    tournamentType: data.tournamentType || '',
+    playerName: data.playerName || '',
+    playerUid: data.playerUid || '',
+    userId: data.userId || '',
+    slotNumber: data.slotNumber || 0,
+    entryFee: data.entryFee || 0,
+    referralBonusUsed: data.referralBonusUsed || 0,
+    refundPercent: data.refundPercent || 0,
+    walletBalanceAfter: data.walletBalanceAfter || 0,
+    category: data.category || '',
+    upiId: data.upiId || '',
+    processedAt: data.processedAt,
+    requestedAt: data.requestedAt,
+    bankDetail: data.bankDetail || '',
+    notes: data.notes || '',
+    walletBalanceBefore: data.walletBalanceBefore || 0,
+  };
+}
+
+// ═══════════════════════════════════════════════════
 // MAIN PAGE
 // ═══════════════════════════════════════════════════
 export default function WalletPage() {
@@ -219,7 +261,13 @@ export default function WalletPage() {
   const [walletBalance, setWalletBalance] = useState(0);
   const [allTransactions, setAllTransactions] = useState<TransactionItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
   const [selectedTxn, setSelectedTxn] = useState<TransactionItem | null>(null);
+
+  // Pagination cursor
+  const lastDocRef = useRef<QueryDocumentSnapshot | null>(null);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   // ── Clean History Modal State ──
   const [showCleanModal, setShowCleanModal] = useState(false);
@@ -236,51 +284,57 @@ export default function WalletPage() {
     withdrawnAmount: 0,
   });
 
-  // ── Fetch All Transactions (no pagination) ──
+  // ── Paginated Transaction Fetch (50 per batch, newest first) ──
+  const loadTransactions = useCallback(async (reset: boolean = false) => {
+    if (!user) return;
+    if (reset) {
+      setLoading(true);
+      lastDocRef.current = null;
+      setHasMore(true);
+    } else {
+      setLoadingMore(true);
+    }
+
+    try {
+      const txnRef = collection(db, 'hosts', user.uid, 'transactionHistory');
+      let q;
+      if (reset || !lastDocRef.current) {
+        q = query(txnRef, orderBy('timestamp', 'desc'), limit(PAGE_SIZE));
+      } else {
+        q = query(txnRef, orderBy('timestamp', 'desc'), startAfter(lastDocRef.current), limit(PAGE_SIZE));
+      }
+
+      const snap = await getDocs(q);
+
+      if (snap.empty) {
+        if (reset) setAllTransactions([]);
+        setHasMore(false);
+      } else {
+        const items = snap.docs.map(parseTxnDoc);
+        // Update cursor to last doc
+        lastDocRef.current = snap.docs[snap.docs.length - 1];
+        // If we got fewer than PAGE_SIZE, no more data
+        if (snap.docs.length < PAGE_SIZE) setHasMore(false);
+
+        if (reset) {
+          setAllTransactions(items);
+        } else {
+          setAllTransactions((prev) => [...prev, ...items]);
+        }
+      }
+    } catch (e) {
+      console.error('Transaction fetch error:', e);
+    } finally {
+      setLoading(false);
+      setLoadingMore(false);
+    }
+  }, [user]);
+
+  // Initial load
   useEffect(() => {
     if (authLoading || !user) return;
-    setLoading(true);
-    const txnRef = collection(db, 'hosts', user.uid, 'transactionHistory');
-    getDocs(txnRef)
-      .then((snap) => {
-        const items: TransactionItem[] = snap.docs.map((docSnap) => {
-          const data = docSnap.data();
-          return {
-            id: docSnap.id,
-            _raw: data,
-            timestamp: safeTimestamp(data.timestamp),
-            transactionType: data.transactionType || '',
-            transactionId: data.transactionId || docSnap.id,
-            amount: data.amount || 0,
-            paymentStatus: data.paymentStatus || data.status || '',
-            status: data.status || data.paymentStatus || '',
-            description: data.description || '',
-            tournamentId: data.tournamentId || '',
-            tournamentType: data.tournamentType || '',
-            playerName: data.playerName || '',
-            playerUid: data.playerUid || '',
-            userId: data.userId || '',
-            slotNumber: data.slotNumber || 0,
-            entryFee: data.entryFee || 0,
-            referralBonusUsed: data.referralBonusUsed || 0,
-            refundPercent: data.refundPercent || 0,
-            walletBalanceAfter: data.walletBalanceAfter || 0,
-            category: data.category || '',
-            upiId: data.upiId || '',
-            processedAt: data.processedAt,
-            requestedAt: data.requestedAt,
-            bankDetail: data.bankDetail || '',
-            notes: data.notes || '',
-            walletBalanceBefore: data.walletBalanceBefore || 0,
-          };
-        });
-        // Sort newest → oldest
-        items.sort((a, b) => getTimestampMs(b._raw || {}) - getTimestampMs(a._raw || {}));
-        setAllTransactions(items);
-      })
-      .catch((e) => console.error('Transaction fetch error:', e))
-      .finally(() => setLoading(false));
-  }, [user, authLoading]);
+    loadTransactions(true);
+  }, [user, authLoading, loadTransactions]);
 
   // ── Fetch Aggregated Stats from transactionRecord (5 docs only, no iteration) ──
   useEffect(() => {
@@ -325,6 +379,22 @@ export default function WalletPage() {
       return cat === activeTab;
     });
   }, [allTransactions, activeTab]);
+
+  // ── Infinite Scroll via IntersectionObserver ──
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMore && !loading && !loadingMore) {
+          loadTransactions(false);
+        }
+      },
+      { rootMargin: '200px' }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasMore, loading, loadingMore, loadTransactions]);
 
   // ── Stats (from transactionRecord — no iteration needed) ──
   const stats = useMemo(() => ({
@@ -385,41 +455,8 @@ export default function WalletPage() {
 
       setCleanResult({ deleted, message: `Successfully deleted ${deleted} transaction${deleted !== 1 ? 's' : ''}.` });
 
-      // Refresh transaction list
-      const freshSnap = await getDocs(txnRef);
-      const items: TransactionItem[] = freshSnap.docs.map((docSnap) => {
-        const data = docSnap.data();
-        return {
-          id: docSnap.id,
-          _raw: data,
-          timestamp: safeTimestamp(data.timestamp),
-          transactionType: data.transactionType || '',
-          transactionId: data.transactionId || docSnap.id,
-          amount: data.amount || 0,
-          paymentStatus: data.paymentStatus || data.status || '',
-          status: data.status || data.paymentStatus || '',
-          description: data.description || '',
-          tournamentId: data.tournamentId || '',
-          tournamentType: data.tournamentType || '',
-          playerName: data.playerName || '',
-          playerUid: data.playerUid || '',
-          userId: data.userId || '',
-          slotNumber: data.slotNumber || 0,
-          entryFee: data.entryFee || 0,
-          referralBonusUsed: data.referralBonusUsed || 0,
-          refundPercent: data.refundPercent || 0,
-          walletBalanceAfter: data.walletBalanceAfter || 0,
-          category: data.category || '',
-          upiId: data.upiId || '',
-          processedAt: data.processedAt,
-          requestedAt: data.requestedAt,
-          bankDetail: data.bankDetail || '',
-          notes: data.notes || '',
-          walletBalanceBefore: data.walletBalanceBefore || 0,
-        };
-      });
-      items.sort((a, b) => getTimestampMs(b._raw || {}) - getTimestampMs(a._raw || {}));
-      setAllTransactions(items);
+      // Refresh with paginated reload
+      await loadTransactions(true);
     } catch (err) {
       console.error('Clean history error:', err);
       setCleanResult({ deleted: 0, message: 'Error deleting transactions. Try again.' });
@@ -763,6 +800,20 @@ export default function WalletPage() {
                   </button>
                 );
               })}
+            </div>
+          )}
+
+          {/* Infinite Scroll Sentinel + Loading / End indicators */}
+          {!loading && filtered.length > 0 && (
+            <div ref={sentinelRef} className="py-4 flex flex-col items-center space-y-2">
+              {loadingMore ? (
+                <>
+                  <div className="w-5 h-5 border-2 border-cyan-400/30 border-t-cyan-400 rounded-full animate-spin" />
+                  <p className="text-[11px] text-[oklch(0.45,0.04,290)]">Loading more...</p>
+                </>
+              ) : !hasMore ? (
+                <p className="text-[11px] text-[oklch(0.35,0.04,290)]">You've seen all transactions</p>
+              ) : null}
             </div>
           )}
         </div>
