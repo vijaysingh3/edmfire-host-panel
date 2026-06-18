@@ -28,9 +28,11 @@ import {
   query,
   orderBy,
   limit,
+  startAfter,
   doc,
   writeBatch,
   onSnapshot as docOnSnapshot,
+  type DocumentSnapshot,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
@@ -250,9 +252,11 @@ export default function WalletPage() {
   const [walletBalance, setWalletBalance] = useState(0);
   const [allTransactions, setAllTransactions] = useState<TransactionItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [displayCount, setDisplayCount] = useState(PAGE_SIZE);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
   const [selectedTxn, setSelectedTxn] = useState<TransactionItem | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const lastDocRef = useRef<DocumentSnapshot | null>(null);
 
   // ── Clean History Modal State ──
   const [showCleanModal, setShowCleanModal] = useState(false);
@@ -265,7 +269,38 @@ export default function WalletPage() {
     totalDeposit: 0, entryFee: 0, totalPrizeDistribution: 0, totalRefunded: 0, withdrawnAmount: 0,
   });
 
-  // ── Fetch latest 50 transactions — only 50 Firestore reads, newest first ──
+  const parseDoc = (docSnap: DocumentSnapshot): TransactionItem => {
+    const data = docSnap.data() || {};
+    return {
+      id: docSnap.id, _raw: data,
+      timestamp: safeTimestamp(data),
+      transactionType: data.transactionType || '',
+      transactionId: data.transactionId || docSnap.id,
+      amount: data.amount || 0,
+      paymentStatus: data.paymentStatus || data.status || '',
+      status: data.status || data.paymentStatus || '',
+      description: data.description || '',
+      tournamentId: data.tournamentId || '',
+      tournamentType: data.tournamentType || '',
+      playerName: data.playerName || '',
+      playerUid: data.playerUid || '',
+      userId: data.userId || '',
+      slotNumber: data.slotNumber || 0,
+      entryFee: data.entryFee || 0,
+      referralBonusUsed: data.referralBonusUsed || 0,
+      refundPercent: data.refundPercent || 0,
+      walletBalanceAfter: data.walletBalanceAfter || 0,
+      category: data.category || '',
+      upiId: data.upiId || '',
+      processedAt: data.processedAt,
+      requestedAt: data.requestedAt,
+      bankDetail: data.bankDetail || '',
+      notes: data.notes || '',
+      walletBalanceBefore: data.walletBalanceBefore || 0,
+    };
+  };
+
+  // ── Fetch latest 50 (initial load) ──
   const loadTransactions = useCallback(async () => {
     if (!user) return;
     setLoading(true);
@@ -273,44 +308,35 @@ export default function WalletPage() {
       const txnRef = collection(db, 'hosts', user.uid, 'transactionHistory');
       const q = query(txnRef, orderBy('timestamp', 'desc'), limit(50));
       const snap = await getDocs(q);
-      const items = snap.docs.map((docSnap) => {
-        const data = docSnap.data();
-        return {
-          id: docSnap.id, _raw: data,
-          timestamp: safeTimestamp(data),
-          transactionType: data.transactionType || '',
-          transactionId: data.transactionId || docSnap.id,
-          amount: data.amount || 0,
-          paymentStatus: data.paymentStatus || data.status || '',
-          status: data.status || data.paymentStatus || '',
-          description: data.description || '',
-          tournamentId: data.tournamentId || '',
-          tournamentType: data.tournamentType || '',
-          playerName: data.playerName || '',
-          playerUid: data.playerUid || '',
-          userId: data.userId || '',
-          slotNumber: data.slotNumber || 0,
-          entryFee: data.entryFee || 0,
-          referralBonusUsed: data.referralBonusUsed || 0,
-          refundPercent: data.refundPercent || 0,
-          walletBalanceAfter: data.walletBalanceAfter || 0,
-          category: data.category || '',
-          upiId: data.upiId || '',
-          processedAt: data.processedAt,
-          requestedAt: data.requestedAt,
-          bankDetail: data.bankDetail || '',
-          notes: data.notes || '',
-          walletBalanceBefore: data.walletBalanceBefore || 0,
-        };
-      });
+      const items = snap.docs.map(parseDoc);
+      lastDocRef.current = snap.docs[snap.docs.length - 1] || null;
+      setHasMore(snap.docs.length === 50);
       setAllTransactions(items);
-      setDisplayCount(PAGE_SIZE);
     } catch (e) {
       console.error('Transaction fetch error:', e);
     } finally {
       setLoading(false);
     }
   }, [user]);
+
+  // ── Load next 50 (scroll trigger) ──
+  const loadMore = useCallback(async () => {
+    if (!user || loadingMore || !lastDocRef.current) return;
+    setLoadingMore(true);
+    try {
+      const txnRef = collection(db, 'hosts', user.uid, 'transactionHistory');
+      const q = query(txnRef, orderBy('timestamp', 'desc'), startAfter(lastDocRef.current), limit(50));
+      const snap = await getDocs(q);
+      const items = snap.docs.map(parseDoc);
+      lastDocRef.current = snap.docs[snap.docs.length - 1] || null;
+      setHasMore(snap.docs.length === 50);
+      setAllTransactions((prev) => [...prev, ...items]);
+    } catch (e) {
+      console.error('Load more error:', e);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [user, loadingMore]);
 
   useEffect(() => {
     if (authLoading || !user) return;
@@ -352,29 +378,21 @@ export default function WalletPage() {
     return allTransactions.filter((t) => getTransactionCategory(t._raw || {}) === activeTab);
   }, [allTransactions, activeTab]);
 
-  // Reset visible count on tab switch
-  useEffect(() => { setDisplayCount(PAGE_SIZE); }, [activeTab]);
-
-  const hasMore = displayCount < filtered.length;
-
-  // Virtual pagination — render only `displayCount` items (instant scroll, no reads)
-  const displayed = useMemo(() => filtered.slice(0, displayCount), [filtered, displayCount]);
-
-  // ── Infinite Scroll (instant, zero Firestore reads) ──
+  // ── Infinite Scroll — triggers loadMore (next 50 Firestore reads) ──
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && hasMore) {
-          setDisplayCount((prev) => Math.min(prev + PAGE_SIZE, filtered.length));
+        if (entries[0].isIntersecting && hasMore && !loadingMore) {
+          loadMore();
         }
       },
-      { rootMargin: '200px' }
+      { rootMargin: '300px' }
     );
     observer.observe(el);
     return () => observer.disconnect();
-  }, [hasMore, filtered.length]);
+  }, [hasMore, loadingMore, loadMore]);
 
   // ── Stats ──
   const stats = useMemo(() => ({
@@ -391,6 +409,7 @@ export default function WalletPage() {
     setCleaning(true);
     setCleanResult(null);
     try {
+      // Fetch only docs older than 24h for deletion (reads all, but this is admin action)
       const txnRef = collection(db, 'hosts', user.uid, 'transactionHistory');
       const snap = await getDocs(txnRef);
       const cutoff = Date.now() - 24 * 60 * 60 * 1000;
@@ -660,7 +679,7 @@ export default function WalletPage() {
               <div className="w-6 h-6 border-2 border-cyan-400/30 border-t-cyan-400 rounded-full animate-spin" />
               <p className="text-xs text-[oklch(0.45,0.04,290)]">Loading transactions...</p>
             </div>
-          ) : displayed.length === 0 ? (
+          ) : filtered.length === 0 ? (
             <div className="flex flex-col items-center py-16 space-y-3">
               <Wallet className="w-10 h-10 text-[oklch(0.25,0.04,290)]" />
               <p className="text-xs text-[oklch(0.40,0.04,290)]">
@@ -669,7 +688,7 @@ export default function WalletPage() {
             </div>
           ) : (
             <div className="space-y-2">
-              {displayed.map((txn) => {
+              {filtered.map((txn) => {
                 const credit = isCredit(txn);
                 const txnIcon = getTxnIcon(txn);
                 const statusKey = (txn.paymentStatus || txn.status || '').toLowerCase();
@@ -717,10 +736,13 @@ export default function WalletPage() {
             </div>
           )}
 
-          {/* Infinite Scroll Sentinel */}
-          {!loading && displayed.length > 0 && (
+          {/* Infinite Scroll Sentinel + Loader */}
+          {!loading && filtered.length > 0 && (
             <div ref={sentinelRef} className="py-4 flex flex-col items-center space-y-2">
-              {!hasMore && (
+              {loadingMore && (
+                <div className="w-5 h-5 border-2 border-cyan-400/30 border-t-cyan-400 rounded-full animate-spin" />
+              )}
+              {!hasMore && !loadingMore && (
                 <p className="text-[11px] text-[oklch(0.35,0.04,290)]">You've seen all transactions</p>
               )}
             </div>
