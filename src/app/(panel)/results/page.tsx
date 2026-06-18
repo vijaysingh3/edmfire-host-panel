@@ -483,6 +483,12 @@ export default function ResultsPage() {
             ids.push(id);
           }
         }
+        // Newest first — EDM_999 before EDM_001
+        ids.sort((a, b) => {
+          const numA = parseInt(a.replace(/\D/g, '')) || 0;
+          const numB = parseInt(b.replace(/\D/g, '')) || 0;
+          return numB - numA;
+        });
         idMap[type.value] = ids;
       }
       setTournamentIdsMap(idMap);
@@ -631,8 +637,11 @@ export default function ResultsPage() {
         });
       }
 
-      // Sort: pending first, then saved
-      parsedPlayers.sort((a, b) => (a.isSaved === b.isSaved ? 0 : a.isSaved ? 1 : -1));
+      // Sort: pending first (newest joined first), then saved
+      parsedPlayers.sort((a, b) => {
+        if (a.isSaved !== b.isSaved) return a.isSaved ? 1 : -1;
+        return (b.joinTime || 0) - (a.joinTime || 0);
+      });
 
       setPlayers(parsedPlayers);
       setPendingCount(pending);
@@ -1118,7 +1127,7 @@ export default function ResultsPage() {
         </div>
 
         {/* Player Table */}
-        <div className="space-y-1.5">
+        <div className="space-y-2">
           {filteredPlayers.length === 0 && !loading ? (
             <div className="flex flex-col items-center py-10 space-y-2">
               <Target className="w-8 h-8 text-[oklch(0.30,0.04,290)]" />
@@ -1129,78 +1138,78 @@ export default function ResultsPage() {
           ) : (
             <div className="overflow-x-auto -mx-1 px-1">
               {/* Table Header */}
-              <div className={`grid gap-0.5 ${tournamentMode === 'BattleRoyal' ? 'grid-cols-[minmax(90px,1.2fr)_36px_50px_60px_50px_44px_68px] min-w-[450px]' : 'grid-cols-[minmax(90px,1.2fr)_36px_50px_38px_38px_42px_60px_50px_44px_68px] min-w-[580px]'}`}>
+              <div className={`grid gap-1 ${tournamentMode === 'BattleRoyal' ? 'grid-cols-[minmax(120px,1.3fr)_40px_56px_72px_56px_52px_76px] min-w-[520px]' : 'grid-cols-[minmax(120px,1.3fr)_40px_56px_44px_44px_50px_72px_56px_52px_76px] min-w-[660px]'}`}>
                 {tournamentMode === 'BattleRoyal'
                   ? ['Name', '#', 'K', 'Coins', 'Rank', 'Result', 'Action'].map((h) => (
-                      <div key={h} className="text-[8px] font-bold text-[oklch(0.40,0.04,290)] text-center py-1 px-0.5 uppercase tracking-wider">{h}</div>
+                      <div key={h} className="text-[11px] font-bold text-[oklch(0.50,0.04,290)] text-center py-1.5 px-0.5 uppercase tracking-wider">{h}</div>
                     ))
                   : ['Name', '#', 'K', 'D', 'A', 'Dmg', 'Coins', 'Rank', 'Result', 'Action'].map((h) => (
-                      <div key={h} className="text-[8px] font-bold text-[oklch(0.40,0.04,290)] text-center py-1 px-0.5 uppercase tracking-wider">{h}</div>
+                      <div key={h} className="text-[11px] font-bold text-[oklch(0.50,0.04,290)] text-center py-1.5 px-0.5 uppercase tracking-wider">{h}</div>
                     ))
                 }
               </div>
               {/* Table Rows */}
               {filteredPlayers.map((player) => (
-                <div key={player.playerKey} className={`grid gap-0.5 items-center border rounded-lg px-0.5 py-1 hover:border-fuchsia-500/30 transition-colors ${player.isSaved ? 'bg-green-500/5 border-green-500/20' : 'bg-[oklch(0.16,0.04,290)] border-[oklch(0.25,0.05,290)]'} ${tournamentMode === 'BattleRoyal' ? 'grid-cols-[minmax(90px,1.2fr)_36px_50px_60px_50px_44px_68px] min-w-[450px]' : 'grid-cols-[minmax(90px,1.2fr)_36px_50px_38px_38px_42px_60px_50px_44px_68px] min-w-[580px]'}`}>
+                <div key={player.playerKey} className={`grid gap-1 items-center border rounded-xl px-1 py-2 hover:border-fuchsia-500/30 transition-colors ${player.isSaved ? 'bg-green-500/5 border-green-500/20' : 'bg-[oklch(0.16,0.04,290)] border-[oklch(0.25,0.05,290)]'} ${tournamentMode === 'BattleRoyal' ? 'grid-cols-[minmax(120px,1.3fr)_40px_56px_72px_56px_52px_76px] min-w-[520px]' : 'grid-cols-[minmax(120px,1.3fr)_40px_56px_44px_44px_50px_72px_56px_52px_76px] min-w-[660px]'}`}>
                   {/* Name + Level */}
                   <div className="min-w-0 flex flex-col px-1">
-                    <div className="flex items-center gap-1">
-                      {player.isSaved && <span className="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0"></span>}
-                      <span className={`text-[10px] font-bold truncate leading-tight ${player.isSaved ? 'text-green-300/60' : 'text-white'}`}>{player.inGameName}</span>
+                    <div className="flex items-center gap-1.5">
+                      {player.isSaved && <span className="w-2 h-2 rounded-full bg-green-400 shrink-0"></span>}
+                      <span className={`text-sm font-bold truncate leading-tight ${player.isSaved ? 'text-green-300/60' : 'text-white'}`}>{player.inGameName}</span>
                     </div>
-                    <span className="text-[8px] text-[oklch(0.45,0.04,290)] font-mono leading-tight">{player.inGameUID} · Lv{player.inGameLevel}</span>
+                    <span className="text-[10px] text-[oklch(0.50,0.04,290)] font-mono leading-tight mt-0.5">{player.inGameUID} · Lv{player.inGameLevel}</span>
                   </div>
                   {/* Slot */}
-                  <div className="text-[10px] font-bold text-fuchsia-400 text-center">{player.positionSeat}</div>
+                  <div className="text-sm font-bold text-fuchsia-400 text-center">{player.positionSeat}</div>
                   {/* Kills + +/- */}
-                  <div className="flex items-center gap-px">
-                    <button onClick={() => updatePlayerField(player.playerKey, 'kills', player.kills - 1)} className="w-4 h-5 flex items-center justify-center rounded-l bg-[oklch(0.20,0.04,290)] text-[9px] text-red-400/70 hover:bg-red-500/20 active:bg-red-500/30 select-none">−</button>
+                  <div className="flex items-center gap-0.5">
+                    <button onClick={() => updatePlayerField(player.playerKey, 'kills', player.kills - 1)} className="w-5 h-7 flex items-center justify-center rounded-l bg-[oklch(0.20,0.04,290)] text-xs text-red-400/70 hover:bg-red-500/20 active:bg-red-500/30 select-none">−</button>
                     <input type="number" value={player.kills}
                       onChange={(e) => updatePlayerField(player.playerKey, 'kills', Number(e.target.value))}
-                      className="w-full bg-[oklch(0.20,0.04,290)] text-[10px] font-bold text-white text-center py-0.5 outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
-                    <button onClick={() => updatePlayerField(player.playerKey, 'kills', player.kills + 1)} className="w-4 h-5 flex items-center justify-center rounded-r bg-[oklch(0.20,0.04,290)] text-[9px] text-green-400/70 hover:bg-green-500/20 active:bg-green-500/30 select-none">+</button>
+                      className="w-full bg-[oklch(0.20,0.04,290)] text-xs font-bold text-white text-center py-1 outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+                    <button onClick={() => updatePlayerField(player.playerKey, 'kills', player.kills + 1)} className="w-5 h-7 flex items-center justify-center rounded-r bg-[oklch(0.20,0.04,290)] text-xs text-green-400/70 hover:bg-green-500/20 active:bg-green-500/30 select-none">+</button>
                   </div>
                   {/* Deaths — hidden in BattleRoyal */}
                   {tournamentMode !== 'BattleRoyal' && (
                     <input type="number" value={player.deaths}
                       onChange={(e) => updatePlayerField(player.playerKey, 'deaths', Number(e.target.value))}
-                      className="w-full bg-[oklch(0.20,0.04,290)] text-[10px] font-bold text-teal-400 text-center rounded py-0.5 outline-none focus:ring-1 focus:ring-fuchsia-500/40 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+                      className="w-full bg-[oklch(0.20,0.04,290)] text-xs font-bold text-teal-400 text-center rounded py-1 outline-none focus:ring-1 focus:ring-fuchsia-500/40 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
                   )}
                   {/* Assists — hidden in BattleRoyal */}
                   {tournamentMode !== 'BattleRoyal' && (
                     <input type="number" value={player.assists}
                       onChange={(e) => updatePlayerField(player.playerKey, 'assists', Number(e.target.value))}
-                      className="w-full bg-[oklch(0.20,0.04,290)] text-[10px] font-bold text-white text-center rounded py-0.5 outline-none focus:ring-1 focus:ring-fuchsia-500/40 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+                      className="w-full bg-[oklch(0.20,0.04,290)] text-xs font-bold text-white text-center rounded py-1 outline-none focus:ring-1 focus:ring-fuchsia-500/40 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
                   )}
                   {/* Damage — hidden in BattleRoyal */}
                   {tournamentMode !== 'BattleRoyal' && (
                     <input type="number" value={player.damage}
                       onChange={(e) => updatePlayerField(player.playerKey, 'damage', Number(e.target.value))}
-                      className="w-full bg-[oklch(0.20,0.04,290)] text-[10px] font-bold text-red-400 text-center rounded py-0.5 outline-none focus:ring-1 focus:ring-fuchsia-500/40 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+                      className="w-full bg-[oklch(0.20,0.04,290)] text-xs font-bold text-red-400 text-center rounded py-1 outline-none focus:ring-1 focus:ring-fuchsia-500/40 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
                   )}
                   {/* Coins + +/- */}
-                  <div className="flex items-center gap-px">
+                  <div className="flex items-center gap-0.5">
                     <button onClick={() => updatePlayerField(player.playerKey, 'coinsEarned', Math.max(0, player.coinsEarned - 100))}
-                      className="w-4 h-5 flex items-center justify-center rounded-l bg-[oklch(0.20,0.04,290)] text-[9px] text-red-400/70 hover:bg-red-500/20 active:bg-red-500/30 select-none">−</button>
+                      className="w-5 h-7 flex items-center justify-center rounded-l bg-[oklch(0.20,0.04,290)] text-xs text-red-400/70 hover:bg-red-500/20 active:bg-red-500/30 select-none">−</button>
                     <input type="number" value={Math.round(paisaToRupees(player.coinsEarned))}
                       onChange={(e) => updatePlayerField(player.playerKey, 'coinsEarned', rupeesToPaisa(Number(e.target.value)))}
-                      className="w-full bg-[oklch(0.20,0.04,290)] text-[10px] font-bold text-yellow-400 text-center py-0.5 outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+                      className="w-full bg-[oklch(0.20,0.04,290)] text-xs font-bold text-yellow-400 text-center py-1 outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
                     <button onClick={() => updatePlayerField(player.playerKey, 'coinsEarned', player.coinsEarned + 100)}
-                      className="w-4 h-5 flex items-center justify-center rounded-r bg-[oklch(0.20,0.04,290)] text-[9px] text-green-400/70 hover:bg-green-500/20 active:bg-green-500/30 select-none">+</button>
+                      className="w-5 h-7 flex items-center justify-center rounded-r bg-[oklch(0.20,0.04,290)] text-xs text-green-400/70 hover:bg-green-500/20 active:bg-green-500/30 select-none">+</button>
                   </div>
                   {/* Rank + +/- */}
-                  <div className="flex items-center gap-px">
+                  <div className="flex items-center gap-0.5">
                     <button onClick={() => updatePlayerField(player.playerKey, 'rank', Math.max(0, player.rank - 1))}
-                      className="w-4 h-5 flex items-center justify-center rounded-l bg-[oklch(0.20,0.04,290)] text-[9px] text-red-400/70 hover:bg-red-500/20 active:bg-red-500/30 select-none">−</button>
+                      className="w-5 h-7 flex items-center justify-center rounded-l bg-[oklch(0.20,0.04,290)] text-xs text-red-400/70 hover:bg-red-500/20 active:bg-red-500/30 select-none">−</button>
                     <input type="number" value={player.rank}
                       onChange={(e) => updatePlayerField(player.playerKey, 'rank', Number(e.target.value))}
-                      className="w-full bg-[oklch(0.20,0.04,290)] text-[10px] font-bold text-white text-center py-0.5 outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+                      className="w-full bg-[oklch(0.20,0.04,290)] text-xs font-bold text-white text-center py-1 outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
                     <button onClick={() => updatePlayerField(player.playerKey, 'rank', player.rank + 1)}
-                      className="w-4 h-5 flex items-center justify-center rounded-r bg-[oklch(0.20,0.04,290)] text-[9px] text-green-400/70 hover:bg-green-500/20 active:bg-green-500/30 select-none">+</button>
+                      className="w-5 h-7 flex items-center justify-center rounded-r bg-[oklch(0.20,0.04,290)] text-xs text-green-400/70 hover:bg-green-500/20 active:bg-green-500/30 select-none">+</button>
                   </div>
                   {/* Result Badge (auto) */}
                   <div className="text-center px-0.5">
-                    <span className={`inline-block text-[8px] font-bold px-1.5 py-0.5 rounded-full leading-none ${
+                    <span className={`inline-block text-[10px] font-bold px-2 py-1 rounded-full leading-none ${
                       player.result === 'win' ? 'bg-green-500/20 text-green-400' :
                       player.result === 'lose' ? 'bg-red-500/20 text-red-400' :
                       player.result === 'top10' ? 'bg-blue-500/20 text-blue-400' :
@@ -1211,16 +1220,16 @@ export default function ResultsPage() {
                     </span>
                   </div>
                   {/* Actions */}
-                  <div className="flex gap-0.5 px-0.5">
+                  <div className="flex gap-1 px-0.5">
                     <button onClick={() => updatePlayer(player)} disabled={updatingPlayer === player.playerKey}
-                      className="flex-1 flex items-center justify-center py-1 rounded bg-green-500/20 text-green-400 hover:bg-green-500/30 active:scale-95 transition-all disabled:opacity-30" title="Update">
+                      className="flex-1 flex items-center justify-center py-1.5 rounded-lg bg-green-500/20 text-green-400 hover:bg-green-500/30 active:scale-95 transition-all disabled:opacity-30" title="Update">
                       {updatingPlayer === player.playerKey
-                        ? <div className="w-2.5 h-2.5 border-2 border-green-400/30 border-t-green-400 rounded-full animate-spin" />
-                        : <Save className="w-3 h-3" />}
+                        ? <div className="w-3 h-3 border-2 border-green-400/30 border-t-green-400 rounded-full animate-spin" />
+                        : <Save className="w-3.5 h-3.5" />}
                     </button>
                     <button onClick={() => handleDeleteClick(player)}
-                      className="flex-1 flex items-center justify-center py-1 rounded bg-red-500/20 text-red-400 hover:bg-red-500/30 active:scale-95 transition-all" title="Delete">
-                      <Trash2 className="w-2.5 h-2.5" />
+                      className="flex-1 flex items-center justify-center py-1.5 rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/30 active:scale-95 transition-all" title="Delete">
+                      <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
