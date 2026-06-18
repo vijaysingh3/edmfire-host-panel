@@ -244,9 +244,62 @@ const statusConfig: Record<string, { color: string; icon: React.ReactNode }> = {
 };
 
 // ═══════════════════════════════════════════════════
+// DEVTOOLS / INSPECTION PROTECTION
+// ═══════════════════════════════════════
+function useDevToolsProtection() {
+  useEffect(() => {
+    // Block right-click context menu
+    const blockContextMenu = (e: MouseEvent) => e.preventDefault();
+    document.addEventListener('contextmenu', blockContextMenu);
+
+    // Block keyboard shortcuts: F12, Ctrl+Shift+I/J/C, Ctrl+U, Ctrl+S
+    const blockShortcuts = (e: KeyboardEvent) => {
+      if (e.key === 'F12') { e.preventDefault(); return false; }
+      if (e.ctrlKey && e.shiftKey && ['I','i','J','j','C','c'].includes(e.key)) { e.preventDefault(); return false; }
+      if (e.ctrlKey && ['u','U','s','S'].includes(e.key)) { e.preventDefault(); return false; }
+    };
+    document.addEventListener('keydown', blockShortcuts);
+
+    // Clear console periodically
+    const consoleClear = setInterval(() => { console.clear(); }, 2000);
+
+    // Override console.log to suppress data leaks
+    const origLog = console.log;
+    const origTable = console.table;
+    const origDir = console.dir;
+    console.log = () => {};
+    console.table = () => {};
+    console.dir = () => {};
+
+    // DevTools open detection via debugger timing
+    let devtoolsOpen = false;
+    const detectDevTools = setInterval(() => {
+      const start = performance.now();
+      debugger;
+      const end = performance.now();
+      if (end - start > 100 && !devtoolsOpen) {
+        devtoolsOpen = true;
+        document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0a0a0a;color:#ff4444;font-family:monospace;font-size:18px">Access Denied</div>';
+      }
+    }, 1000);
+
+    return () => {
+      document.removeEventListener('contextmenu', blockContextMenu);
+      document.removeEventListener('keydown', blockShortcuts);
+      clearInterval(consoleClear);
+      clearInterval(detectDevTools);
+      console.log = origLog;
+      console.table = origTable;
+      console.dir = origDir;
+    };
+  }, []);
+}
+
+// ═══════════════════════════════════════
 // MAIN PAGE
 // ═══════════════════════════════════════════════════
 export default function WalletPage() {
+  useDevToolsProtection();
   const { user, isLoading: authLoading } = useAuth();
   const [activeTab, setActiveTab] = useState('all');
   const [walletBalance, setWalletBalance] = useState(0);
