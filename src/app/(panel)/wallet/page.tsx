@@ -27,12 +27,7 @@ import {
   getDocs,
   doc,
   writeBatch,
-  query,
-  limit,
-  startAfter,
-  orderBy,
   onSnapshot as docOnSnapshot,
-  type QueryDocumentSnapshot,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
@@ -93,7 +88,6 @@ function formatCoins(paisa: number): string {
 function safeTimestamp(val: any): string {
   if (!val) return '';
   if (typeof val === 'string') return val;
-  // Handle Firestore {stringValue: "31 May 2026, 7:21 pm IST"} format
   if (val && typeof val === 'object' && 'stringValue' in val) {
     return typeof val.stringValue === 'string' ? val.stringValue : String(val.stringValue);
   }
@@ -195,16 +189,12 @@ function getTxnMeta(txn: TransactionItem): string {
 }
 
 // ═══════════════════════════════════════════════════
-// SORT HELPER — Extract ms from any timestamp format
-// Handles: Firestore Timestamp objects, numbers, ISO strings,
-// and custom format like "31 May 2026, 7:21 pm IST"
+// TIMESTAMP PARSING — handles {stringValue: "31 May 2026, 7:21 pm IST"}
 // ═══════════════════════════════════════════════════
 function parseCustomDateString(str: string): number {
-  // Try native parser first
   const d = new Date(str);
   if (!isNaN(d.getTime())) return d.getTime();
 
-  // Parse "31 May 2026, 7:21 pm IST" format
   const m = str.match(/^(\d{1,2})\s+(\w{3,9})\s+(\d{4}),\s*(\d{1,2}):(\d{2})\s*(am|pm)/i);
   if (m) {
     const months: Record<string, number> = {
@@ -224,11 +214,9 @@ function parseCustomDateString(str: string): number {
 function getTimestampMs(raw: Record<string, any>): number {
   const ts = raw.timestamp;
   if (!ts) return 0;
-  // Firestore Timestamp object {seconds, nanoseconds}
   if (ts && typeof ts === 'object' && 'seconds' in ts) {
     return ts.seconds * 1000 + (ts.nanoseconds || 0) / 1e6;
   }
-  // Handle {stringValue: "31 May 2026, 7:21 pm IST"} format
   if (ts && typeof ts === 'object' && 'stringValue' in ts) {
     return parseCustomDateString(String(ts.stringValue));
   }
@@ -248,41 +236,6 @@ const statusConfig: Record<string, { color: string; icon: React.ReactNode }> = {
 };
 
 // ═══════════════════════════════════════════════════
-// PARSE DOC SNAPSHOT → TransactionItem (avoids duplication)
-// ═══════════════════════════════════════════════════
-function parseTxnDoc(docSnap: QueryDocumentSnapshot): TransactionItem {
-  const data = docSnap.data();
-  return {
-    id: docSnap.id,
-    _raw: data,
-    timestamp: safeTimestamp(data.timestamp),
-    transactionType: data.transactionType || '',
-    transactionId: data.transactionId || docSnap.id,
-    amount: data.amount || 0,
-    paymentStatus: data.paymentStatus || data.status || '',
-    status: data.status || data.paymentStatus || '',
-    description: data.description || '',
-    tournamentId: data.tournamentId || '',
-    tournamentType: data.tournamentType || '',
-    playerName: data.playerName || '',
-    playerUid: data.playerUid || '',
-    userId: data.userId || '',
-    slotNumber: data.slotNumber || 0,
-    entryFee: data.entryFee || 0,
-    referralBonusUsed: data.referralBonusUsed || 0,
-    refundPercent: data.refundPercent || 0,
-    walletBalanceAfter: data.walletBalanceAfter || 0,
-    category: data.category || '',
-    upiId: data.upiId || '',
-    processedAt: data.processedAt,
-    requestedAt: data.requestedAt,
-    bankDetail: data.bankDetail || '',
-    notes: data.notes || '',
-    walletBalanceBefore: data.walletBalanceBefore || 0,
-  };
-}
-
-// ═══════════════════════════════════════════════════
 // MAIN PAGE
 // ═══════════════════════════════════════════════════
 export default function WalletPage() {
@@ -291,11 +244,8 @@ export default function WalletPage() {
   const [walletBalance, setWalletBalance] = useState(0);
   const [allTransactions, setAllTransactions] = useState<TransactionItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
+  const [displayCount, setDisplayCount] = useState(PAGE_SIZE);
   const [selectedTxn, setSelectedTxn] = useState<TransactionItem | null>(null);
-
-  const lastDocRef = useRef<QueryDocumentSnapshot | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   // ── Clean History Modal State ──
@@ -304,87 +254,71 @@ export default function WalletPage() {
   const [cleaning, setCleaning] = useState(false);
   const [cleanResult, setCleanResult] = useState<{ deleted: number; message: string } | null>(null);
 
-  // ── Aggregated stats from transactionRecord (saves read quota) ──
+  // ── Aggregated stats from transactionRecord (5 docs only) ──
   const [recordStats, setRecordStats] = useState({
-    totalDeposit: 0,
-    entryFee: 0,
-    totalPrizeDistribution: 0,
-    totalRefunded: 0,
-    withdrawnAmount: 0,
+    totalDeposit: 0, entryFee: 0, totalPrizeDistribution: 0, totalRefunded: 0, withdrawnAmount: 0,
   });
 
-  // ── Paginated Fetch: orderBy desc + reverse + client-side exact sort ──
-  // Firestore string-DESC puts old dates first → we reverse to get newest-first,
-  // then refine with getTimestampMs for exact chronological order.
-  const loadTransactions = useCallback(async (reset: boolean = false) => {
+  // ── Fetch ALL transactions once, sort newest-first, virtual-paginate display ──
+  const loadTransactions = useCallback(async () => {
     if (!user) return;
-    if (reset) {
-      setLoading(true);
-      lastDocRef.current = null;
-      setHasMore(true);
-    } else {
-      setLoadingMore(true);
-    }
-
+    setLoading(true);
     try {
       const txnRef = collection(db, 'hosts', user.uid, 'transactionHistory');
-      let q;
-      if (reset || !lastDocRef.current) {
-        q = query(txnRef, orderBy('timestamp', 'desc'), limit(PAGE_SIZE));
-      } else {
-        q = query(txnRef, orderBy('timestamp', 'desc'), startAfter(lastDocRef.current), limit(PAGE_SIZE));
-      }
-
-      const snap = await getDocs(q);
-
-      if (snap.empty) {
-        if (reset) setAllTransactions([]);
-        setHasMore(false);
-      } else {
-        let items = snap.docs.map(parseTxnDoc);
-        // Reverse: Firestore string-DESC gives old-first, flip to get newest-first
-        items.reverse();
-        // Exact chronological sort using parsed date milliseconds
-        items.sort((a, b) => getTimestampMs(b._raw || {}) - getTimestampMs(a._raw || {}));
-        lastDocRef.current = snap.docs[snap.docs.length - 1];
-        if (snap.docs.length < PAGE_SIZE) setHasMore(false);
-
-        if (reset) {
-          setAllTransactions(items);
-        } else {
-          setAllTransactions((prev) => {
-            const merged = [...prev, ...items];
-            merged.sort((a, b) => getTimestampMs(b._raw || {}) - getTimestampMs(a._raw || {}));
-            return merged;
-          });
-        }
-      }
+      const snap = await getDocs(txnRef);
+      const items = snap.docs.map((docSnap) => {
+        const data = docSnap.data();
+        return {
+          id: docSnap.id, _raw: data,
+          timestamp: safeTimestamp(data.timestamp),
+          transactionType: data.transactionType || '',
+          transactionId: data.transactionId || docSnap.id,
+          amount: data.amount || 0,
+          paymentStatus: data.paymentStatus || data.status || '',
+          status: data.status || data.paymentStatus || '',
+          description: data.description || '',
+          tournamentId: data.tournamentId || '',
+          tournamentType: data.tournamentType || '',
+          playerName: data.playerName || '',
+          playerUid: data.playerUid || '',
+          userId: data.userId || '',
+          slotNumber: data.slotNumber || 0,
+          entryFee: data.entryFee || 0,
+          referralBonusUsed: data.referralBonusUsed || 0,
+          refundPercent: data.refundPercent || 0,
+          walletBalanceAfter: data.walletBalanceAfter || 0,
+          category: data.category || '',
+          upiId: data.upiId || '',
+          processedAt: data.processedAt,
+          requestedAt: data.requestedAt,
+          bankDetail: data.bankDetail || '',
+          notes: data.notes || '',
+          walletBalanceBefore: data.walletBalanceBefore || 0,
+        };
+      });
+      items.sort((a, b) => getTimestampMs(b._raw || {}) - getTimestampMs(a._raw || {}));
+      setAllTransactions(items);
+      setDisplayCount(PAGE_SIZE);
     } catch (e) {
       console.error('Transaction fetch error:', e);
     } finally {
       setLoading(false);
-      setLoadingMore(false);
     }
   }, [user]);
 
-  // Initial load
   useEffect(() => {
     if (authLoading || !user) return;
-    loadTransactions(true);
+    loadTransactions();
   }, [user, authLoading, loadTransactions]);
 
-  // ── Fetch Aggregated Stats from transactionRecord (5 docs only, no iteration) ──
+  // ── Stats from transactionRecord (5 docs, no iteration) ──
   useEffect(() => {
     if (authLoading || !user) return;
     const recordRef = collection(db, 'hosts', user.uid, 'transactionRecord');
     getDocs(recordRef)
       .then((snap) => {
         const data: Record<string, number> = {};
-        snap.forEach((d) => {
-          const field = d.id;
-          const val = d.data()?.amounts || 0;
-          data[field] = val;
-        });
+        snap.forEach((d) => { data[d.id] = d.data()?.amounts || 0; });
         setRecordStats({
           totalDeposit: data.totalDeposit || 0,
           entryFee: data.entryFee || 0,
@@ -401,9 +335,7 @@ export default function WalletPage() {
     if (authLoading || !user) return;
     const walletRef = doc(db, 'hosts', user.uid, 'accountBalance', 'wallet');
     const unsubscribe = docOnSnapshot(walletRef, (snap) => {
-      if (snap.exists()) {
-        setWalletBalance(snap.data()?.walletBalance || 0);
-      }
+      if (snap.exists()) setWalletBalance(snap.data()?.walletBalance || 0);
     }, () => {});
     return () => unsubscribe();
   }, [user, authLoading]);
@@ -411,29 +343,34 @@ export default function WalletPage() {
   // ── Client-side type filter ──
   const filtered = useMemo(() => {
     if (activeTab === 'all') return allTransactions;
-    return allTransactions.filter((t) => {
-      const cat = getTransactionCategory(t._raw || {});
-      return cat === activeTab;
-    });
+    return allTransactions.filter((t) => getTransactionCategory(t._raw || {}) === activeTab);
   }, [allTransactions, activeTab]);
 
-  // ── Infinite Scroll ──
+  // Reset visible count on tab switch
+  useEffect(() => { setDisplayCount(PAGE_SIZE); }, [activeTab]);
+
+  const hasMore = displayCount < filtered.length;
+
+  // Virtual pagination — render only `displayCount` items (instant scroll, no reads)
+  const displayed = useMemo(() => filtered.slice(0, displayCount), [filtered, displayCount]);
+
+  // ── Infinite Scroll (instant, zero Firestore reads) ──
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && hasMore && !loading && !loadingMore) {
-          loadTransactions(false);
+        if (entries[0].isIntersecting && hasMore) {
+          setDisplayCount((prev) => Math.min(prev + PAGE_SIZE, filtered.length));
         }
       },
       { rootMargin: '200px' }
     );
     observer.observe(el);
     return () => observer.disconnect();
-  }, [hasMore, loading, loadingMore, loadTransactions]);
+  }, [hasMore, filtered.length]);
 
-  // ── Stats (from transactionRecord — no iteration needed) ──
+  // ── Stats ──
   const stats = useMemo(() => ({
     totalDeposit: recordStats.totalDeposit,
     totalEntry: recordStats.entryFee,
@@ -447,53 +384,32 @@ export default function WalletPage() {
     if (!user || cleaning) return;
     setCleaning(true);
     setCleanResult(null);
-
     try {
       const txnRef = collection(db, 'hosts', user.uid, 'transactionHistory');
       const snap = await getDocs(txnRef);
-      const now = Date.now();
-      const cutoff = now - 24 * 60 * 60 * 1000; // 24 hours ago
-
+      const cutoff = Date.now() - 24 * 60 * 60 * 1000;
       const toDelete: string[] = [];
-
       snap.forEach((docSnap) => {
         const data = docSnap.data();
         const tsMs = getTimestampMs(data);
-
-        // Must be older than 24 hours
         if (tsMs === 0 || tsMs >= cutoff) return;
-
-        // Filter by type
-        if (cleanType !== 'all') {
-          const cat = getTransactionCategory(data);
-          if (cat !== cleanType) return;
-        }
-
+        if (cleanType !== 'all' && getTransactionCategory(data) !== cleanType) return;
         toDelete.push(docSnap.id);
       });
-
       if (toDelete.length === 0) {
         setCleanResult({ deleted: 0, message: 'No transactions found older than 24 hours for this type.' });
         setCleaning(false);
         return;
       }
-
-      // Batch delete (max 500 per batch)
       let deleted = 0;
       for (let i = 0; i < toDelete.length; i += 500) {
         const batch = writeBatch(db);
-        const chunk = toDelete.slice(i, i + 500);
-        chunk.forEach((id) => {
-          batch.delete(doc(db, 'hosts', user.uid, 'transactionHistory', id));
-        });
+        toDelete.slice(i, i + 500).forEach((id) => batch.delete(doc(db, 'hosts', user.uid, 'transactionHistory', id)));
         await batch.commit();
-        deleted += chunk.length;
+        deleted += Math.min(500, toDelete.length - i);
       }
-
       setCleanResult({ deleted, message: `Successfully deleted ${deleted} transaction${deleted !== 1 ? 's' : ''}.` });
-
-      // Refresh
-      await loadTransactions(true);
+      await loadTransactions();
     } catch (err) {
       console.error('Clean history error:', err);
       setCleanResult({ deleted: 0, message: 'Error deleting transactions. Try again.' });
@@ -512,14 +428,8 @@ export default function WalletPage() {
     const st = statusConfig[statusKey];
     const txnIcon = getTxnIcon(selectedTxn);
     const category = getTransactionCategory(raw);
-
     const categoryLabels: Record<string, string> = {
-      deposit: 'Deposit',
-      entry_fee: 'Entry Fee',
-      prize: 'Prize Distribution',
-      refund: 'Refund',
-      withdrawal: 'Withdrawal',
-      other: 'Other',
+      deposit: 'Deposit', entry_fee: 'Entry Fee', prize: 'Prize Distribution', refund: 'Refund', withdrawal: 'Withdrawal', other: 'Other',
     };
 
     return (
@@ -590,7 +500,6 @@ export default function WalletPage() {
   // ═══════════════════════════════════════════════════
   return (
     <div className="min-h-screen pb-20 lg:pb-6">
-      {/* Header */}
       <header className="bg-gradient-to-r from-cyan-500 to-teal-700 px-4 lg:px-6 py-6 sticky top-0 z-20">
         <div className="max-w-4xl mx-auto">
           <h1 className="text-xl lg:text-2xl font-extrabold text-white flex items-center gap-2">
@@ -676,8 +585,7 @@ export default function WalletPage() {
         {showCleanModal && (
           <div className="fixed inset-0 z-50 flex items-end lg:items-center justify-center">
             <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => !cleaning && setShowCleanModal(false)} />
-            <div className="relative w-full max-w-md mx-4 mb-4 lg:mb-0 rounded-2xl bg-[oklch(0.16,0.04,290)] border border-[oklch(0.30,0.06,290)] p-5 space-y-4 animate-in slide-in-from-bottom-4">
-              {/* Modal Header */}
+            <div className="relative w-full max-w-md mx-4 mb-4 lg:mb-0 rounded-2xl bg-[oklch(0.16,0.04,290)] border border-[oklch(0.30,0.06,290)] p-5 space-y-4">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-red-500/15 flex items-center justify-center">
                   <Trash2 className="w-5 h-5 text-red-400" />
@@ -687,16 +595,10 @@ export default function WalletPage() {
                   <p className="text-[11px] text-[oklch(0.50,0.04,290)]">Delete old transaction data</p>
                 </div>
               </div>
-
-              {/* Transaction Type Dropdown */}
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-[oklch(0.60,0.04,290)]">Transaction Type</label>
-                <select
-                  value={cleanType}
-                  onChange={(e) => setCleanType(e.target.value)}
-                  disabled={cleaning}
-                  className="w-full px-3 py-2.5 rounded-xl bg-[oklch(0.22,0.04,290)] border border-[oklch(0.30,0.06,290)] text-sm text-white focus:outline-none focus:border-cyan-500/50 transition-colors disabled:opacity-50 [&>option]:bg-[#1a1232] [&>option]:text-white"
-                >
+                <select value={cleanType} onChange={(e) => setCleanType(e.target.value)} disabled={cleaning}
+                  className="w-full px-3 py-2.5 rounded-xl bg-[oklch(0.22,0.04,290)] border border-[oklch(0.30,0.06,290)] text-sm text-white focus:outline-none focus:border-cyan-500/50 transition-colors disabled:opacity-50 [&>option]:bg-[#1a1232] [&>option]:text-white">
                   <option value="all">All Types</option>
                   <option value="deposit">Deposit</option>
                   <option value="entry_fee">Entry Fee</option>
@@ -705,55 +607,24 @@ export default function WalletPage() {
                   <option value="withdrawal">Withdrawal</option>
                 </select>
               </div>
-
-              {/* Date Range Info */}
               <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20">
                 <Clock className="w-4 h-4 text-amber-400 shrink-0" />
-                <p className="text-xs text-amber-300">
-                  Only transactions <span className="font-bold">older than 24 hours</span> will be deleted.
-                </p>
+                <p className="text-xs text-amber-300">Only transactions <span className="font-bold">older than 24 hours</span> will be deleted.</p>
               </div>
-
-              {/* Result Message */}
               {cleanResult && (
-                <div className={`flex items-center gap-2 px-3 py-2.5 rounded-xl ${
-                  cleanResult.deleted > 0
-                    ? 'bg-green-500/10 border border-green-500/20'
-                    : 'bg-amber-500/10 border border-amber-500/20'
-                }`}>
-                  {cleanResult.deleted > 0
-                    ? <CheckCircle2 className="w-4 h-4 text-green-400 shrink-0" />
-                    : <Clock className="w-4 h-4 text-amber-400 shrink-0" />
-                  }
+                <div className={`flex items-center gap-2 px-3 py-2.5 rounded-xl ${cleanResult.deleted > 0 ? 'bg-green-500/10 border border-green-500/20' : 'bg-amber-500/10 border border-amber-500/20'}`}>
+                  {cleanResult.deleted > 0 ? <CheckCircle2 className="w-4 h-4 text-green-400 shrink-0" /> : <Clock className="w-4 h-4 text-amber-400 shrink-0" />}
                   <p className={`text-xs ${cleanResult.deleted > 0 ? 'text-green-300' : 'text-amber-300'}`}>{cleanResult.message}</p>
                 </div>
               )}
-
-              {/* Actions */}
               <div className="flex gap-2 pt-1">
-                <button
-                  onClick={() => setShowCleanModal(false)}
-                  disabled={cleaning}
-                  className="flex-1 py-2.5 rounded-xl bg-[oklch(0.22,0.04,290)] border border-[oklch(0.30,0.06,290)] text-sm font-medium text-[oklch(0.70,0.04,290)] hover:bg-[oklch(0.26,0.04,290)] transition-colors disabled:opacity-50"
-                >
+                <button onClick={() => setShowCleanModal(false)} disabled={cleaning}
+                  className="flex-1 py-2.5 rounded-xl bg-[oklch(0.22,0.04,290)] border border-[oklch(0.30,0.06,290)] text-sm font-medium text-[oklch(0.70,0.04,290)] hover:bg-[oklch(0.26,0.04,290)] transition-colors disabled:opacity-50">
                   Cancel
                 </button>
-                <button
-                  onClick={handleCleanHistory}
-                  disabled={cleaning}
-                  className="flex-1 py-2.5 rounded-xl bg-red-500 text-sm font-bold text-white hover:bg-red-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-                >
-                  {cleaning ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                      Deleting...
-                    </>
-                  ) : (
-                    <>
-                      <Trash2 className="w-4 h-4" />
-                      Delete
-                    </>
-                  )}
+                <button onClick={handleCleanHistory} disabled={cleaning}
+                  className="flex-1 py-2.5 rounded-xl bg-red-500 text-sm font-bold text-white hover:bg-red-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
+                  {cleaning ? (<><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />Deleting...</>) : (<><Trash2 className="w-4 h-4" />Delete</>)}
                 </button>
               </div>
             </div>
@@ -783,7 +654,7 @@ export default function WalletPage() {
               <div className="w-6 h-6 border-2 border-cyan-400/30 border-t-cyan-400 rounded-full animate-spin" />
               <p className="text-xs text-[oklch(0.45,0.04,290)]">Loading transactions...</p>
             </div>
-          ) : filtered.length === 0 ? (
+          ) : displayed.length === 0 ? (
             <div className="flex flex-col items-center py-16 space-y-3">
               <Wallet className="w-10 h-10 text-[oklch(0.25,0.04,290)]" />
               <p className="text-xs text-[oklch(0.40,0.04,290)]">
@@ -792,7 +663,7 @@ export default function WalletPage() {
             </div>
           ) : (
             <div className="space-y-2">
-              {filtered.map((txn) => {
+              {displayed.map((txn) => {
                 const credit = isCredit(txn);
                 const txnIcon = getTxnIcon(txn);
                 const statusKey = (txn.paymentStatus || txn.status || '').toLowerCase();
@@ -840,17 +711,12 @@ export default function WalletPage() {
             </div>
           )}
 
-          {/* Infinite Scroll Sentinel + Loading / End indicators */}
-          {!loading && filtered.length > 0 && (
+          {/* Infinite Scroll Sentinel */}
+          {!loading && displayed.length > 0 && (
             <div ref={sentinelRef} className="py-4 flex flex-col items-center space-y-2">
-              {loadingMore ? (
-                <>
-                  <div className="w-5 h-5 border-2 border-cyan-400/30 border-t-cyan-400 rounded-full animate-spin" />
-                  <p className="text-[11px] text-[oklch(0.45,0.04,290)]">Loading more...</p>
-                </>
-              ) : !hasMore ? (
+              {!hasMore && (
                 <p className="text-[11px] text-[oklch(0.35,0.04,290)]">You've seen all transactions</p>
-              ) : null}
+              )}
             </div>
           )}
         </div>
