@@ -27,12 +27,7 @@ import {
   getDocs,
   doc,
   writeBatch,
-  query,
-  limit,
-  startAfter,
-  orderBy,
   onSnapshot as docOnSnapshot,
-  type QueryDocumentSnapshot,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
@@ -291,12 +286,9 @@ export default function WalletPage() {
   const [walletBalance, setWalletBalance] = useState(0);
   const [allTransactions, setAllTransactions] = useState<TransactionItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
+  const [displayCount, setDisplayCount] = useState(PAGE_SIZE);
   const [selectedTxn, setSelectedTxn] = useState<TransactionItem | null>(null);
 
-  // Pagination cursor
-  const lastDocRef = useRef<QueryDocumentSnapshot | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   // ── Clean History Modal State ──
@@ -314,61 +306,30 @@ export default function WalletPage() {
     withdrawnAmount: 0,
   });
 
-  // ── Paginated Fetch: orderBy('timestamp','desc').limit(50) ──
-  // Server-side DESC order + client-side sort refinement for accuracy
-  const loadTransactions = useCallback(async (reset: boolean = false) => {
+  // ── Fetch all transactions once, sort newest-first, virtual-paginate display ──
+  // timestamp is {stringValue: "31 May 2026, 7:21 pm IST"} (map type) →
+  // Firestore orderBy CANNOT sort this correctly, so we fetch all & sort client-side.
+  const loadTransactions = useCallback(async () => {
     if (!user) return;
-    if (reset) {
-      setLoading(true);
-      lastDocRef.current = null;
-      setHasMore(true);
-    } else {
-      setLoadingMore(true);
-    }
-
+    setLoading(true);
     try {
       const txnRef = collection(db, 'hosts', user.uid, 'transactionHistory');
-      let q;
-      if (reset || !lastDocRef.current) {
-        q = query(txnRef, orderBy('timestamp', 'desc'), limit(PAGE_SIZE));
-      } else {
-        q = query(txnRef, orderBy('timestamp', 'desc'), startAfter(lastDocRef.current), limit(PAGE_SIZE));
-      }
-
-      const snap = await getDocs(q);
-
-      if (snap.empty) {
-        if (reset) setAllTransactions([]);
-        setHasMore(false);
-      } else {
-        const items = snap.docs.map(parseTxnDoc);
-        // Client-side sort refinement: ensures exact newest-first ordering
-        items.sort((a, b) => getTimestampMs(b._raw || {}) - getTimestampMs(a._raw || {}));
-        lastDocRef.current = snap.docs[snap.docs.length - 1];
-        if (snap.docs.length < PAGE_SIZE) setHasMore(false);
-
-        if (reset) {
-          setAllTransactions(items);
-        } else {
-          setAllTransactions((prev) => {
-            const merged = [...prev, ...items];
-            merged.sort((a, b) => getTimestampMs(b._raw || {}) - getTimestampMs(a._raw || {}));
-            return merged;
-          });
-        }
-      }
+      const snap = await getDocs(txnRef);
+      const items = snap.docs.map(parseTxnDoc);
+      items.sort((a, b) => getTimestampMs(b._raw || {}) - getTimestampMs(a._raw || {}));
+      setAllTransactions(items);
+      setDisplayCount(PAGE_SIZE);
     } catch (e) {
       console.error('Transaction fetch error:', e);
     } finally {
       setLoading(false);
-      setLoadingMore(false);
     }
   }, [user]);
 
   // Initial load
   useEffect(() => {
     if (authLoading || !user) return;
-    loadTransactions(true);
+    loadTransactions();
   }, [user, authLoading, loadTransactions]);
 
   // ── Fetch Aggregated Stats from transactionRecord (5 docs only, no iteration) ──
@@ -406,7 +367,7 @@ export default function WalletPage() {
     return () => unsubscribe();
   }, [user, authLoading]);
 
-  // ── Client-side type filter (from loaded paginated data) ──
+  // ── Client-side type filter ──
   const filtered = useMemo(() => {
     if (activeTab === 'all') return allTransactions;
     return allTransactions.filter((t) => {
@@ -415,21 +376,29 @@ export default function WalletPage() {
     });
   }, [allTransactions, activeTab]);
 
-  // ── Infinite Scroll via IntersectionObserver ──
+  // Reset visible count on tab switch
+  useEffect(() => { setDisplayCount(PAGE_SIZE); }, [activeTab]);
+
+  const hasMore = displayCount < filtered.length;
+
+  // Virtual pagination — render only first `displayCount` from sorted+filtered list
+  const displayed = useMemo(() => filtered.slice(0, displayCount), [filtered, displayCount]);
+
+  // ── Infinite Scroll (instant, no Firestore reads) ──
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && hasMore && !loading && !loadingMore) {
-          loadTransactions(false);
+        if (entries[0].isIntersecting && hasMore) {
+          setDisplayCount((prev) => Math.min(prev + PAGE_SIZE, filtered.length));
         }
       },
       { rootMargin: '200px' }
     );
     observer.observe(el);
     return () => observer.disconnect();
-  }, [hasMore, loading, loadingMore, loadTransactions]);
+  }, [hasMore, filtered.length]);
 
   // ── Stats (from transactionRecord — no iteration needed) ──
   const stats = useMemo(() => ({
@@ -490,8 +459,8 @@ export default function WalletPage() {
 
       setCleanResult({ deleted, message: `Successfully deleted ${deleted} transaction${deleted !== 1 ? 's' : ''}.` });
 
-      // Refresh with paginated reload
-      await loadTransactions(true);
+      // Refresh
+      await loadTransactions();
     } catch (err) {
       console.error('Clean history error:', err);
       setCleanResult({ deleted: 0, message: 'Error deleting transactions. Try again.' });
@@ -781,7 +750,7 @@ export default function WalletPage() {
               <div className="w-6 h-6 border-2 border-cyan-400/30 border-t-cyan-400 rounded-full animate-spin" />
               <p className="text-xs text-[oklch(0.45,0.04,290)]">Loading transactions...</p>
             </div>
-          ) : filtered.length === 0 ? (
+          ) : displayed.length === 0 ? (
             <div className="flex flex-col items-center py-16 space-y-3">
               <Wallet className="w-10 h-10 text-[oklch(0.25,0.04,290)]" />
               <p className="text-xs text-[oklch(0.40,0.04,290)]">
@@ -790,7 +759,7 @@ export default function WalletPage() {
             </div>
           ) : (
             <div className="space-y-2">
-              {filtered.map((txn) => {
+              {displayed.map((txn) => {
                 const credit = isCredit(txn);
                 const txnIcon = getTxnIcon(txn);
                 const statusKey = (txn.paymentStatus || txn.status || '').toLowerCase();
@@ -839,16 +808,11 @@ export default function WalletPage() {
           )}
 
           {/* Infinite Scroll Sentinel + Loading / End indicators */}
-          {!loading && filtered.length > 0 && (
+          {!loading && displayed.length > 0 && (
             <div ref={sentinelRef} className="py-4 flex flex-col items-center space-y-2">
-              {loadingMore ? (
-                <>
-                  <div className="w-5 h-5 border-2 border-cyan-400/30 border-t-cyan-400 rounded-full animate-spin" />
-                  <p className="text-[11px] text-[oklch(0.45,0.04,290)]">Loading more...</p>
-                </>
-              ) : !hasMore ? (
+              {!hasMore && (
                 <p className="text-[11px] text-[oklch(0.35,0.04,290)]">You've seen all transactions</p>
-              ) : null}
+              )}
             </div>
           )}
         </div>
