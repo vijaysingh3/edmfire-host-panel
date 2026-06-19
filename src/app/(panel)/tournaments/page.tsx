@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import {
   Trophy,
@@ -170,6 +170,10 @@ export default function TournamentsPage() {
   const [configLoading, setConfigLoading] = useState(true);
   const [dataLoading, setDataLoading] = useState(false);
 
+  // ── Cache: 50 second per-tab cache to avoid re-fetching on every tab switch ──
+  const cacheRef = useRef<Record<string, { data: TournamentItem[]; ts: number }>>({});
+  const CACHE_TTL = 50_000; // 50 seconds
+
   // ═══════════════════════════════════════════════════
   // INIT — Load Tournaments for default tab (Upcoming)
   // ═══════════════════════════════════════════════════
@@ -179,9 +183,16 @@ export default function TournamentsPage() {
     loadTournaments();
   }, [user, authLoading]);
 
-  // Reload when tab changes
+  // Reload when tab changes — uses cache if still valid
   useEffect(() => {
     if (authLoading || !user || configLoading) return;
+
+    // Check cache first
+    const cached = cacheRef.current[activeTab];
+    if (cached && (Date.now() - cached.ts) < CACHE_TTL) {
+      setAllTournaments(cached.data);
+      return;
+    }
     loadTournaments();
   }, [activeTab]);
 
@@ -271,16 +282,18 @@ export default function TournamentsPage() {
         } catch {}
       }
 
-      // Sort: newest first (parse DD/MM/YYYY HH:MM:SS)
+      // Sort: Tournament ID numeric part, biggest number first (EDM_750 > EDM_700 > EDM_100)
       allTournaments.sort((a, b) => {
-        const parseDate = (s: string) => {
-          if (!s) return 0;
-          const p = s.match(/(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2}):(\d{2})/);
-          if (!p) return 0;
-          return new Date(+p[3], +p[2] - 1, +p[1], +p[4], +p[5], +p[6]).getTime();
+        const extractNum = (id: string) => {
+          if (!id) return 0;
+          const m = id.match(/\d+/);
+          return m ? parseInt(m[0], 10) : 0;
         };
-        return parseDate(b.createdAt) - parseDate(a.createdAt);
+        return extractNum(b.tournamentId) - extractNum(a.tournamentId);
       });
+
+      // Store in cache for this tab
+      cacheRef.current[activeTab] = { data: allTournaments, ts: Date.now() };
 
       setAllTournaments(allTournaments);
       if (allTournaments.length > 0) toast.success(`${allTournaments.length} tournaments loaded`);
