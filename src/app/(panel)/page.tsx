@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useAuth } from '@/context/AuthContext';
@@ -64,6 +64,7 @@ const steps = [
 
 export default function Dashboard() {
   const { hostData } = useAuth();
+  const [showSupport, setShowSupport] = useState(false);
 
   // Indian time ke anusar greeting — memoize taaki har render pe na call ho
   const greeting = useMemo(() => getIndianGreeting(hostData?.fullName), [hostData?.fullName]);
@@ -130,6 +131,21 @@ export default function Dashboard() {
           </svg>
         </a>
 
+        {/* support button — opens inside panel via iframe */}
+        <button
+          onClick={() => setShowSupport(true)}
+          className="flex items-center gap-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 rounded-xl px-5 py-3.5 text-white shadow-lg hover:scale-[1.02] active:scale-[0.98] transition-all duration-200 cursor-pointer w-fit"
+        >
+          <span className="text-2xl">🎧</span>
+          <div>
+            <p className="font-bold text-sm lg:text-base">Support / Help Center</p>
+            <p className="text-[11px] text-white/70">Problem ho to yahan se help lein</p>
+          </div>
+          <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 ml-1 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
+          </svg>
+        </button>
+
         {/* step-by-step grid */}
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 lg:gap-4">
           {steps.map((step, index) => (
@@ -159,6 +175,31 @@ export default function Dashboard() {
           </h2>
         </div>
       </div>
+
+      {/* Support iframe — full screen inside panel */}
+      {showSupport && (
+        <div className="fixed inset-0 z-50 bg-black/90 flex flex-col">
+          <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-emerald-600 to-teal-700">
+            <div className="flex items-center gap-2">
+              <span className="text-xl">🎧</span>
+              <h2 className="text-white font-bold text-sm">Support / Help Center</h2>
+            </div>
+            <button
+              onClick={() => setShowSupport(false)}
+              className="w-8 h-8 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center text-white transition-colors"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <iframe
+            src="https://admin.edmfire.in/support/"
+            className="flex-1 w-full border-0"
+            allow="camera; microphone"
+          />
+        </div>
+      )}
     </div>
   );
 }
