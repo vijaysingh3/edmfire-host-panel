@@ -136,7 +136,7 @@ function PlayerPopup({ player, onClose }: { player: PlayerData; onClose: () => v
                 : 'border-yellow-400/40 text-yellow-200 bg-yellow-500/20'
             }`}>
               {player.paymentStatus ? <ShieldCheck className="w-3.5 h-3.5" /> : <CircleDot className="w-3.5 h-3.5" />}
-              {player.paymentStatus ? 'Paid' : 'Unpaid'}
+              {player.paymentStatus ? 'Paid (WinnerList)' : 'Unpaid'}
             </span>
           </div>
         </div>
@@ -311,21 +311,36 @@ export default function TournamentDetailPage() {
     else setLoading(true);
 
     try {
-      // RTDB operations are proxied via server-side API route — no client config needed
-
-      // Fetch ONLY JoinedPlayers sub-node — single REST call, fast
+      // Fetch JoinedPlayers
       const joinedPath = `Tournaments/TournamentDetails/${type}/${id}/JoinedPlayers`;
       const rawData = await rtdbGet(joinedPath);
 
+      // Fetch WinnerList to check Paid status
+      let winnerPaidUserIds = new Set<string>();
+      try {
+        const wlPath = `Tournaments/TournamentDetails/${type}/${id}/WinnerList`;
+        const wlData = await rtdbGet(wlPath);
+        if (wlData && typeof wlData === 'object') {
+          const checkPaid = (obj: any) => {
+            if (obj && typeof obj === 'object' && obj.PaymentStatus === true && obj.userId) {
+              winnerPaidUserIds.add(String(obj.userId));
+            }
+          };
+          if (Array.isArray(wlData)) wlData.forEach(checkPaid);
+          else Object.values(wlData).forEach(checkPaid);
+        }
+      } catch {}
+
       if (rawData === null) {
-        // Node doesn't exist at all
         setPlayers([]);
       } else if (typeof rawData === 'object') {
-        // Node exists — parse players (handles both array & object formats)
         const parsed = parseJoinedPlayers(rawData, type);
+        // Override paymentStatus: only Paid if in WinnerList with PaymentStatus=true
+        parsed.forEach(p => {
+          p.paymentStatus = winnerPaidUserIds.has(String(p.userId));
+        });
         setPlayers(parsed);
       } else {
-        // Unexpected format
         setPlayers([]);
       }
     } catch (e: any) {
@@ -457,7 +472,7 @@ export default function TournamentDetailPage() {
                         </div>
                       </div>
 
-                      {/* Paid Badge */}
+                      {/* Paid Badge — based on WinnerList PaymentStatus */}
                       <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-semibold border shrink-0 ${
                         player.paymentStatus
                           ? 'border-green-500/30 text-green-400 bg-green-500/10'

@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { rtdbGet } from '@/lib/rtdb';
-import { collection, getDocs, query, orderBy } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, where } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { toast } from 'sonner';
 
@@ -166,40 +166,54 @@ export default function TournamentsPage() {
   const [activeTab, setActiveTab] = useState('Upcoming');
 
   // ── Data State ──
-  const [tournaments, setTournaments] = useState<TournamentItem[]>([]);
+  const [allTournaments, setAllTournaments] = useState<TournamentItem[]>([]);
   const [configLoading, setConfigLoading] = useState(true);
   const [dataLoading, setDataLoading] = useState(false);
 
   // ═══════════════════════════════════════════════════
-  // INIT — Fetch Remote Config + Load Tournaments
+  // INIT — Load Tournaments for default tab (Upcoming)
   // ═══════════════════════════════════════════════════
   useEffect(() => {
     if (authLoading || !user) return;
-    const init = async () => {
-      setConfigLoading(true);
-
-      setConfigLoading(false);
-      await loadTournaments();
-    };
-    init();
+    setConfigLoading(false);
+    loadTournaments();
   }, [user, authLoading]);
+
+  // Reload when tab changes
+  useEffect(() => {
+    if (authLoading || !user || configLoading) return;
+    loadTournaments();
+  }, [activeTab]);
 
   // ═══════════════════════════════════════════════════
   // LOAD TOURNAMENTS — Firestore myMatches + RTDB TournamentMeta
   // ═══════════════════════════════════════════════════
   const loadTournaments = async () => {
     if (!user || dataLoading) return;
-
     setDataLoading(true);
 
     try {
+      // Determine which types to load based on active tab
+      const isStatusTab = ['Upcoming', 'Ongoing', 'Completed'].includes(activeTab);
+      const tabType = tabToType[activeTab]; // null for status tabs and 'All'
+
       // Step 1: Firestore — hosts/{uid}/myMatches
-      const snap = await getDocs(
-        query(collection(db, 'hosts', user.uid, 'myMatches'), orderBy('__name__', 'desc'))
-      );
+      // For type tabs: only fetch docs matching that type
+      let snap;
+      if (tabType) {
+        // Type-specific: only query that type (faster)
+        const { where } = await import('firebase/firestore');
+        snap = await getDocs(
+          query(collection(db, 'hosts', user.uid, 'myMatches'), where('tournamentType', '==', tabType), orderBy('__name__', 'desc'))
+        );
+      } else {
+        snap = await getDocs(
+          query(collection(db, 'hosts', user.uid, 'myMatches'), orderBy('__name__', 'desc'))
+        );
+      }
 
       if (snap.empty) {
-        setTournaments([]);
+        setAllTournaments([]);
         setDataLoading(false);
         return;
       }
@@ -216,23 +230,23 @@ export default function TournamentsPage() {
         }
       });
 
-      // Step 2: For each type, fetch RTDB TournamentMeta
+      // Step 2: For each type, fetch RTDB TournamentMeta (only needed types)
       const allTournaments: TournamentItem[] = [];
 
       for (const type of Object.keys(grouped)) {
         try {
           const metaPathStr = `Tournaments/TournamentMeta/${type}`;
           const data = await rtdbGet(metaPathStr);
-
           if (!data || typeof data !== 'object') continue;
-
           const ids = grouped[type];
 
           for (const [tId, meta] of Object.entries(data)) {
             if (!ids.includes(tId)) continue;
-
             const m = meta as Record<string, any>;
-            // RTDB field mapping: Mode=tournamentType, Type=gameType(Solo/Duo/Squad)
+
+            // For status tabs: pre-filter by Status at fetch time
+            if (isStatusTab && (m.Status || '') !== activeTab) continue;
+
             const feePaisa = m.JoiningFee || 0;
             const poolPaisa = m.PricePool || 0;
             const joined = m.JoinedPlayersCount || 0;
@@ -249,25 +263,27 @@ export default function TournamentsPage() {
               maxSlots,
               dateTime: m.DateTime || '',
               createdAt: m.CreatedAt || '',
-              gameType: m.Type || '',       // RTDB Type field = Solo/Duo/Squad
+              gameType: m.Type || '',
               map: m.Map || '',
               perKill: m.PerKill || 0,
             });
           }
-        } catch (e: any) {
-        }
+        } catch {}
       }
 
-      // Sort: newest first
+      // Sort: newest first (parse DD/MM/YYYY HH:MM:SS)
       allTournaments.sort((a, b) => {
-        if (!a.createdAt && !b.createdAt) return 0;
-        if (!a.createdAt) return 1;
-        if (!b.createdAt) return -1;
-        return b.createdAt.localeCompare(a.createdAt);
+        const parseDate = (s: string) => {
+          if (!s) return 0;
+          const p = s.match(/(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2}):(\d{2})/);
+          if (!p) return 0;
+          return new Date(+p[3], +p[2] - 1, +p[1], +p[4], +p[5], +p[6]).getTime();
+        };
+        return parseDate(b.createdAt) - parseDate(a.createdAt);
       });
 
-      setTournaments(allTournaments);
-      toast.success(`${allTournaments.length} tournaments loaded`);
+      setAllTournaments(allTournaments);
+      if (allTournaments.length > 0) toast.success(`${allTournaments.length} tournaments loaded`);
 
     } catch (e: any) {
       toast.error('Failed to load tournaments', { description: e.message });
@@ -279,16 +295,12 @@ export default function TournamentsPage() {
   // ═══════════════════════════════════════════════════
   // FILTER + SEARCH
   // ═══════════════════════════════════════════════════
-  let filtered = tournaments;
+  let filtered = allTournaments;
 
-  if (activeTab !== 'All') {
-    filtered = filtered.filter((t) => {
-      if (['Upcoming', 'Ongoing', 'Completed'].includes(activeTab)) {
-        return t.status === activeTab;
-      }
-      const tabType = tabToType[activeTab];
-      return tabType && t.tournamentType === tabType;
-    });
+  // For type tabs and status tabs: data is already filtered at fetch time
+  // Only client-filter for 'All' tab (shows everything)
+  if (activeTab !== 'All' && !['Upcoming', 'Ongoing', 'Completed'].includes(activeTab) && !tabToType[activeTab]) {
+    // fallback — shouldn't happen
   }
 
   if (search.trim()) {
@@ -323,6 +335,7 @@ export default function TournamentsPage() {
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            onFocus={() => { if (activeTab !== 'All') setActiveTab('All'); }}
             placeholder="Search by Tournament ID or Title"
             className="w-full h-11 rounded-xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.30,0.06,290)] pl-10 pr-4 text-sm text-white placeholder:text-[oklch(0.40,0.04,290)] focus:border-blue-500/50 focus:outline-none transition-colors"
           />
@@ -359,14 +372,14 @@ export default function TournamentsPage() {
         </button>
 
         {/* Tournament Count */}
-        {tournaments.length > 0 && (
+        {allTournaments.length > 0 && (
           <p className="text-xs font-medium text-[oklch(0.60,0.04,290)]">
-            {filtered.length} of {tournaments.length} tournaments
+            {filtered.length} of {allTournaments.length} tournaments
           </p>
         )}
 
         {/* Loading State */}
-        {isLoading && tournaments.length === 0 && (
+        {isLoading && allTournaments.length === 0 && (
           <div className="flex flex-col items-center py-16 space-y-3">
             <div className="w-8 h-8 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin" />
             <p className="text-xs text-[oklch(0.45,0.04,290)]">Loading tournaments...</p>
@@ -374,7 +387,7 @@ export default function TournamentsPage() {
         )}
 
         {/* Tournament List */}
-        {!isLoading && tournaments.length > 0 && (
+        {!isLoading && allTournaments.length > 0 && (
           <div className="space-y-3">
             {filtered.length === 0 ? (
               <div className="flex flex-col items-center py-16 space-y-3">
@@ -513,7 +526,7 @@ export default function TournamentsPage() {
         )}
 
         {/* Empty State */}
-        {!isLoading && tournaments.length === 0 && (
+        {!isLoading && allTournaments.length === 0 && (
           <div className="flex flex-col items-center py-16 space-y-3">
             <Trophy className="w-10 h-10 text-[oklch(0.30,0.04,290)]" />
             <p className="text-xs text-[oklch(0.40,0.04,290)]">No tournaments found</p>
