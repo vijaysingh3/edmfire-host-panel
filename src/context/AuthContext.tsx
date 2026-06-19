@@ -8,8 +8,9 @@ import {
   signOut,
   User,
 } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase';
+import { getMessaging, getToken, isSupported } from 'firebase/messaging';
 
 // Firestore hosts document ka interface
 interface HostData {
@@ -74,6 +75,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (data && data.status === 'verified') {
           setHostData(data);
           setIsAuthenticated(true);
+          // FCM token update on session restore too
+          updateFcmToken(firebaseUser.uid);
         } else {
           // host not found ya verified nahi hai
           await signOut(auth);
@@ -112,6 +115,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(firebaseUser);
       setHostData(hostDoc);
       setIsAuthenticated(true);
+
+      // FCM token update — background, no block
+      updateFcmToken(firebaseUser.uid);
+
       return null; // null = success
     } catch (err: any) {
       // Firebase error codes ko user-friendly message mein convert karo
@@ -147,6 +154,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setHostData(null);
     setIsAuthenticated(false);
     router.push('/login');
+  };
+
+  // FCM token request + save to Firestore
+  const updateFcmToken = async (uid: string) => {
+    try {
+      const supported = await isSupported();
+      if (!supported) return;
+      const messaging = getMessaging();
+      const token = await getToken(messaging, {
+        vapidKey: process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY,
+      });
+      if (token) {
+        await updateDoc(doc(db, 'hosts', uid), { fcmToken: token });
+      }
+    } catch {
+      // silent — notification permission denied ya service worker issue
+    }
   };
 
   // Refresh host data (profile update ke baad call kar sakte hain)

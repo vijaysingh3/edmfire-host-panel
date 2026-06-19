@@ -6,7 +6,7 @@ import { useAuth } from '@/context/AuthContext';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { Mail, Lock, Eye, EyeOff, Search } from 'lucide-react';
+import { Mail, Lock, Eye, EyeOff } from 'lucide-react';
 import Image from 'next/image';
 import { toast } from 'sonner';
 
@@ -105,17 +105,6 @@ export default function LoginPage() {
                 </button>
               </div>
             </div>
-
-            {/* Know Your Application Status */}
-            <a href="/apply">
-              <button
-                type="button"
-                className="w-full h-11 rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-300 font-medium text-xs flex items-center justify-center gap-2 hover:bg-amber-500/20 transition-all active:scale-[0.98]"
-              >
-                <Search className="w-4 h-4" />
-                Know Your Application Status
-              </button>
-            </a>
 
             {/* login button */}
             <Button
