@@ -92,6 +92,12 @@
   }
 }
 
+/* Shimmer animation for admin deposit premium badge */
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
 /* Custom scrollbar for dark theme */
 ::-webkit-scrollbar {
   width: 6px;

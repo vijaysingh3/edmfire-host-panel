@@ -20,6 +20,7 @@ import {
   Upload,
   CircleDollarSign,
   Trash2,
+  ShieldCheck,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import {
@@ -75,6 +76,7 @@ const PAGE_SIZE = 50;
 
 const filterTabs = [
   { key: 'all', label: 'All' },
+  { key: 'admin_deposit', label: 'Admin Deposit' },
   { key: 'deposit', label: 'Deposit' },
   { key: 'entry_fee', label: 'Entry Fee' },
   { key: 'prize', label: 'Prize Dist.' },
@@ -109,6 +111,7 @@ function getTransactionCategory(doc: Record<string, any>): string {
   const txnType = (doc.transactionType || '').toLowerCase();
 
   if (txnType === 'withdrawal') return 'withdrawal';
+  if (category === 'admin_deposit') return 'admin_deposit';
   if (category === 'deposit') return 'deposit';
   if (category === 'entryfee') return 'entry_fee';
   if (category === 'prizedistribution') return 'prize';
@@ -144,6 +147,8 @@ function isCredit(txn: TransactionItem): boolean {
 function getTxnIcon(txn: TransactionItem): { icon: React.ReactNode; bg: string } {
   const cat = getTransactionCategory(txn._raw || {});
   switch (cat) {
+    case 'admin_deposit':
+      return { icon: <ShieldCheck className="w-5 h-5" />, bg: 'bg-gradient-to-br from-yellow-500/25 to-amber-500/20 text-yellow-300' };
     case 'deposit':
       return { icon: <CircleDollarSign className="w-5 h-5" />, bg: 'bg-amber-500/15 text-amber-400' };
     case 'entry_fee':
@@ -163,6 +168,7 @@ function getTxnTitle(txn: TransactionItem): string {
   const raw = txn._raw || {};
   const cat = getTransactionCategory(raw);
   switch (cat) {
+    case 'admin_deposit': return 'Deposited By Admin';
     case 'deposit': return 'Deposit via UPI';
     case 'entry_fee': return raw.playerName ? `Entry Fee: ${raw.playerName}` : 'Entry Fee Received';
     case 'prize': return 'Prize Distribution';
@@ -176,6 +182,7 @@ function getTxnSubtitle(txn: TransactionItem): string {
   const raw = txn._raw || {};
   const cat = getTransactionCategory(raw);
   switch (cat) {
+    case 'admin_deposit': return raw.description || 'Admin credited coins to your wallet';
     case 'deposit': return raw.utr ? `UTR: ${raw.utr}` : 'UPI Payment';
     case 'entry_fee': return raw.playerUid ? `UID: ${raw.playerUid}` : (raw.tournamentId ? `Tournament: ${raw.tournamentId}` : 'Tournament Joining');
     case 'prize': return raw.tournamentId ? `Tournament: ${raw.tournamentId}` : 'Winners Paid';
@@ -507,7 +514,7 @@ export default function WalletPage() {
     const txnIcon = getTxnIcon(selectedTxn);
     const category = getTransactionCategory(raw);
     const categoryLabels: Record<string, string> = {
-      deposit: 'Deposit', entry_fee: 'Entry Fee', prize: 'Prize Distribution', refund: 'Refund', withdrawal: 'Withdrawal', other: 'Other',
+      admin_deposit: 'Admin Deposit', deposit: 'Deposit', entry_fee: 'Entry Fee', prize: 'Prize Distribution', refund: 'Refund', withdrawal: 'Withdrawal', other: 'Other',
     };
 
     return (
@@ -748,42 +755,88 @@ export default function WalletPage() {
                 const st = statusConfig[statusKey];
 
                 return (
-                  <button key={txn.id} onClick={() => setSelectedTxn(txn)}
-                    className="w-full text-left p-3.5 rounded-xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.25,0.05,290)] hover:border-[oklch(0.35,0.06,290)] transition-colors active:scale-[0.99]">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-10 h-10 rounded-xl ${txnIcon.bg} flex items-center justify-center shrink-0`}>
-                        {txnIcon.icon}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-white truncate">{getTxnTitle(txn)}</p>
-                        <p className="text-[10px] text-[oklch(0.45,0.04,290)] truncate">{getTxnSubtitle(txn)}</p>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <div className="text-right">
-                          <p className={`text-sm font-semibold ${credit ? 'text-green-400' : 'text-red-400'}`}>
-                            {credit ? '+' : '-'}{formatCoins(txn.amount || 0)}
-                          </p>
-                          <p className="text-[10px] text-[oklch(0.40,0.04,290)]">{txn.timestamp || ''}</p>
+                  getTransactionCategory(txn._raw || {}) === 'admin_deposit' ? (
+                    /* ── Admin Deposit: Premium Badge Item ── */
+                    <button key={txn.id} onClick={() => setSelectedTxn(txn)}
+                      className="w-full text-left p-3.5 rounded-xl bg-gradient-to-r from-yellow-500/10 via-amber-500/5 to-[oklch(0.18,0.04,290)] border border-yellow-500/30 hover:border-yellow-500/50 transition-all active:scale-[0.99] relative overflow-hidden">
+                      {/* Shimmer effect for premium feel */}
+                      <div className="absolute inset-0 bg-gradient-to-r from-transparent via-yellow-400/5 to-transparent -translate-x-full animate-[shimmer_3s_infinite] pointer-events-none" style={{ animation: 'shimmer 3s infinite' }} />
+                      <div className="relative flex items-center gap-3">
+                        <div className={`w-10 h-10 rounded-xl ${txnIcon.bg} flex items-center justify-center shrink-0`}>
+                          {txnIcon.icon}
                         </div>
-                        <ChevronRight className="w-4 h-4 text-[oklch(0.30,0.04,290)]" />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-bold text-yellow-300 truncate">Deposited By Admin</p>
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gradient-to-r from-yellow-500/30 to-amber-500/20 border border-yellow-500/30 text-[9px] font-bold text-yellow-300 uppercase tracking-wider shrink-0">
+                              <ShieldCheck className="w-2.5 h-2.5" />
+                              Admin
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-[oklch(0.50,0.04,290)] truncate mt-0.5">{getTxnSubtitle(txn)}</p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <div className="text-right">
+                            <p className="text-sm font-bold text-green-400">
+                              +{formatCoins(txn.amount || 0)}
+                            </p>
+                            <p className="text-[10px] text-[oklch(0.40,0.04,290)]">{txn.timestamp || ''}</p>
+                          </div>
+                          <ChevronRight className="w-4 h-4 text-yellow-500/50" />
+                        </div>
                       </div>
-                    </div>
-                    <div className="flex items-center justify-between mt-2 pt-2 border-t border-[oklch(0.22,0.04,290)]">
-                      <p className="text-[10px] text-[oklch(0.35,0.04,290)] truncate font-mono">
-                        {txn.transactionId || txn.id}
-                      </p>
-                      <div className="flex items-center gap-2 shrink-0 ml-2">
-                        {getTxnMeta(txn) && (
-                          <p className="text-[10px] text-[oklch(0.50,0.04,290)]">{getTxnMeta(txn)}</p>
-                        )}
-                        {st && (
-                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${st.color}`}>
-                            {st.icon} {statusKey.charAt(0).toUpperCase() + statusKey.slice(1)}
-                          </span>
-                        )}
+                      <div className="relative flex items-center justify-between mt-2 pt-2 border-t border-yellow-500/15">
+                        <p className="text-[10px] text-[oklch(0.35,0.04,290)] truncate font-mono">
+                          {txn.transactionId || txn.id}
+                        </p>
+                        <div className="flex items-center gap-2 shrink-0 ml-2">
+                          {st && (
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${st.color}`}>
+                              {st.icon} {statusKey.charAt(0).toUpperCase() + statusKey.slice(1)}
+                            </span>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  </button>
+                    </button>
+                  ) : (
+                    /* ── Normal Transaction Item ── */
+                    <button key={txn.id} onClick={() => setSelectedTxn(txn)}
+                      className="w-full text-left p-3.5 rounded-xl bg-[oklch(0.18,0.04,290)] border border-[oklch(0.25,0.05,290)] hover:border-[oklch(0.35,0.06,290)] transition-colors active:scale-[0.99]">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-10 h-10 rounded-xl ${txnIcon.bg} flex items-center justify-center shrink-0`}>
+                          {txnIcon.icon}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-white truncate">{getTxnTitle(txn)}</p>
+                          <p className="text-[10px] text-[oklch(0.45,0.04,290)] truncate">{getTxnSubtitle(txn)}</p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <div className="text-right">
+                            <p className={`text-sm font-semibold ${credit ? 'text-green-400' : 'text-red-400'}`}>
+                              {credit ? '+' : '-'}{formatCoins(txn.amount || 0)}
+                            </p>
+                            <p className="text-[10px] text-[oklch(0.40,0.04,290)]">{txn.timestamp || ''}</p>
+                          </div>
+                          <ChevronRight className="w-4 h-4 text-[oklch(0.30,0.04,290)]" />
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between mt-2 pt-2 border-t border-[oklch(0.22,0.04,290)]">
+                        <p className="text-[10px] text-[oklch(0.35,0.04,290)] truncate font-mono">
+                          {txn.transactionId || txn.id}
+                        </p>
+                        <div className="flex items-center gap-2 shrink-0 ml-2">
+                          {getTxnMeta(txn) && (
+                            <p className="text-[10px] text-[oklch(0.50,0.04,290)]">{getTxnMeta(txn)}</p>
+                          )}
+                          {st && (
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${st.color}`}>
+                              {st.icon} {statusKey.charAt(0).toUpperCase() + statusKey.slice(1)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </button>
+                  )
                 );
               })}
             </div>
